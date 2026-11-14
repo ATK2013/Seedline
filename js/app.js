@@ -1,8 +1,8 @@
 // Bump ?v= here and in index.html whenever these files change, so browsers
 // never pair a new page with stale cached scripts or styles.
-import { CROPS, MATURITY } from './crops.js?v=2';
-import { fetchDaily } from './power.js?v=2';
-import { parsePower, addWaterBalance, analyze, riskBand, offsetLabel, OUT, SEASON_DAYS } from './analysis.js?v=2';
+import { CROPS, MATURITY } from './crops.js?v=3';
+import { fetchDaily } from './power.js?v=3';
+import { parsePower, addWaterBalance, analyze, riskBand, offsetLabel, OUT, SEASON_DAYS } from './analysis.js?v=3';
 
 const $ = (id) => document.getElementById(id);
 const DAY = 86400000;
@@ -39,7 +39,8 @@ syncChips();
 for (const [k, m] of Object.entries(MATURITY)) $('maturity').add(new Option(m.name, k));
 $('maturity').value = 'medium';
 
-const map = L.map('map', { worldCopyJump: true }).setView([20, 10], 2);
+const map = L.map('map', { worldCopyJump: true, zoomControl: false }).setView([20, 10], 3);
+L.control.zoom({ position: 'bottomright' }).addTo(map);
 const streets = L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
   maxZoom: 17,
   attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors',
@@ -48,7 +49,7 @@ const satellite = L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/servi
   maxZoom: 17,
   attribution: 'Imagery &copy; Esri, Maxar, Earthstar Geographics',
 });
-L.control.layers({ Map: streets, Satellite: satellite }, null, { collapsed: false }).addTo(map);
+L.control.layers({ Map: streets, Satellite: satellite }, null, { collapsed: false, position: 'bottomleft' }).addTo(map);
 const pinIcon = L.divIcon({ className: 'pin', html: '<svg viewBox="0 0 32 42" width="32" height="42"><path d="M16 41C16 41 30 25.5 30 15A14 14 0 0 0 2 15C2 25.5 16 41 16 41Z" fill="var(--accent)" stroke="#fff" stroke-width="2"/><path d="M16 23v-8m0 1c0-4-2.5-5.5-5.5-5.5 0 3.5 2 5.500 5.500 5.500Zm0 2.500c0-3 2-4.500 5-4.500 0 3-2 4.500-5 4.500Z" fill="#fff" stroke="#fff" stroke-width="1.200" stroke-linecap="round"/></svg>', iconSize: [32, 42], iconAnchor: [16, 41] });
 let pin = null;
 
@@ -60,19 +61,59 @@ function setPin(lat, lon, { pan = false } = {}) {
   if (pan) map.setView([lat, lon], Math.max(map.getZoom(), 7));
 }
 
-map.on('click', (e) => { setPin(e.latlng.lat, e.latlng.lng); run(); });
-$('controls').addEventListener('submit', (e) => { e.preventDefault(); setPin(+$('lat').value, +$('lon').value, { pan: true }); run(); });
-for (const id of ['maturity', 'irrigated']) $(id).addEventListener('change', () => { if (pin) run(); });
-$('locate').addEventListener('click', () => {
-  if (!navigator.geolocation) return showStatus('Location unavailable', 'This browser cannot share a location. Click the map instead.');
-  navigator.geolocation.getCurrentPosition(
-    (p) => { setPin(p.coords.latitude, p.coords.longitude, { pan: true }); run(); },
-    () => showStatus('Location unavailable', 'Could not read your location. Click the map or type coordinates instead.'),
-  );
+// The map starts as the whole screen so a field is easy to find; once a pin is
+// down it shrinks into the side panel. "Full-screen map" brings it back.
+const picking = () => document.body.classList.contains('picking');
+function setPicking(on) {
+  document.body.classList.toggle('picking', on);
+  $('pickDone').hidden = !pin;
+  if (on) scrollTo(0, 0);
+  map.invalidateSize();
+  if (pin) map.setView(pin.getLatLng(), Math.max(map.getZoom(), on ? 5 : 7), { animate: false });
+}
+/** A location was chosen: analyse it, and leave full-screen once the pin has landed. */
+function choose(lat, lon) {
+  const wasPicking = picking();
+  setPin(lat, lon, { pan: !wasPicking });
+  run();
+  if (wasPicking) setTimeout(() => setPicking(false), 550);
+}
+map.on('click', (e) => choose(e.latlng.lat, e.latlng.lng));
+$('expand').addEventListener('click', () => setPicking(true));
+$('pickDone').addEventListener('click', () => setPicking(false));
+addEventListener('keydown', (e) => { if (e.key === 'Escape' && picking() && pin) setPicking(false); });
+
+// Place search (OpenStreetMap Nominatim): moves the map, the click still picks the field.
+$('search').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const q = $('q').value.trim();
+  if (!q) return;
+  const msg = $('searchMsg');
+  msg.hidden = false;
+  msg.textContent = 'Searching…';
+  try {
+    const res = await fetch(`https://nominatim.openstreetmap.org/search?format=json&limit=1&q=${encodeURIComponent(q)}`);
+    const hit = (await res.json())[0];
+    if (!hit) { msg.textContent = `Nothing found for “${q}”. Try a nearby town.`; return; }
+    const [s, n, w, e2] = hit.boundingbox.map(Number);
+    map.fitBounds([[s, w], [n, e2]], { maxZoom: 12 });
+    msg.textContent = 'Now click your field on the map.';
+  } catch {
+    msg.textContent = 'Search is unavailable right now. Zoom the map instead.';
+  }
 });
+$('controls').addEventListener('submit', (e) => { e.preventDefault(); choose(+$('lat').value, +$('lon').value); });
+for (const id of ['maturity', 'irrigated']) $(id).addEventListener('change', () => { if (pin) run(); });
+document.querySelectorAll('.locate').forEach((btn) => btn.addEventListener('click', () => {
+  const fail = (text) => { if (picking()) { $('searchMsg').hidden = false; $('searchMsg').textContent = text; } else showStatus('Location unavailable', text); };
+  if (!navigator.geolocation) return fail('This browser cannot share a location. Click the map instead.');
+  navigator.geolocation.getCurrentPosition(
+    (p) => choose(p.coords.latitude, p.coords.longitude),
+    () => fail('Could not read your location. Click the map instead.'),
+  );
+}));
 
 function showStatus(title, body, kind = 'info') {
-  $('welcome').hidden = true;
   const el = $('status');
   el.hidden = false;
   el.className = `status ${kind}`;
@@ -83,8 +124,8 @@ document.querySelectorAll('[data-example]').forEach((b) => b.addEventListener('c
   const [lat, lon, crop] = b.dataset.example.split(',');
   $('crop').value = crop;
   syncChips();
-  setPin(+lat, +lon, { pan: true });
-  run();
+  if (picking()) map.setView([+lat, +lon], 6, { animate: false });
+  choose(+lat, +lon);
 }));
 
 // ---------------------------------------------------------------------- run
@@ -496,6 +537,7 @@ if (h.length >= 3 && Number.isFinite(+h[0]) && Number.isFinite(+h[1]) && CROPS[h
   syncChips();
   if (MATURITY[h[3]]) $('maturity').value = h[3];
   $('irrigated').checked = h[4] === '1';
+  setPicking(false);
   setPin(+h[0], +h[1], { pan: true });
   run();
 }
