@@ -5,60 +5,91 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Seedline — when to plant, from 40+ years of weather</title>
   <meta name="description" content="Drop a pin, pick a crop. Seedline replays four decades of NASA daily weather to show how your safe planting window has moved and when to plant this season.">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,650&display=swap">
   <link rel="stylesheet" href="vendor/leaflet/leaflet.css">
   <link rel="stylesheet" href="css/style.css">
 </head>
 <body>
-  <header class="top">
-    <div class="brand">
-      <svg viewBox="0 0 24 24" width="26" height="26" aria-hidden="true"><path d="M12 22V11" stroke="currentColor" stroke-width="2" stroke-linecap="round" fill="none"/><path d="M12 12C12 7 8.5 4.5 4 4.5c0 5 3 7.5 8 7.5ZM12 15c0-4 2.8-6 7-6 0 4-2.6 6-7 6Z" fill="currentColor"/></svg>
-      <h1>Seedline</h1>
+  <header class="hero">
+    <svg class="field" viewBox="0 0 1200 220" preserveAspectRatio="xMidYMax slice" aria-hidden="true">
+      <circle class="sun" cx="960" cy="118" r="54"/>
+      <circle class="halo" cx="960" cy="118" r="86"/>
+      <path class="hill far" d="M0 132Q300 92 620 124T1200 108V220H0Z"/>
+      <path class="hill near" d="M0 150Q340 118 700 146T1200 134V220H0Z"/>
+      <g class="rows">
+        <path d="M600 148L-260 220"/><path d="M600 148L-40 220"/><path d="M600 148L170 220"/><path d="M600 148L330 220"/><path d="M600 148L470 220"/>
+        <path d="M600 148L600 220"/><path d="M600 148L730 220"/><path d="M600 148L870 220"/><path d="M600 148L1030 220"/><path d="M600 148L1240 220"/><path d="M600 148L1460 220"/>
+      </g>
+    </svg>
+    <div class="heroin">
+      <div class="brand">
+        <svg viewBox="0 0 24 24" width="30" height="30" aria-hidden="true"><path d="M12 22V11" stroke="currentColor" stroke-width="2" stroke-linecap="round" fill="none"/><path d="M12 12C12 7 8.5 4.5 4 4.5c0 5 3 7.5 8 7.5ZM12 15c0-4 2.800-6 7-6 0 4-2.600 6-7 6Z" fill="currentColor"/></svg>
+        <span>Seedline</span>
+      </div>
+      <h1>Know when to plant.</h1>
+      <p class="tagline">Drop a pin on your field. We replay 45 years of daily weather at that exact spot to find your safest planting window, and show how it has been moving.</p>
     </div>
-    <p class="tagline">When to plant, worked out from four decades of daily weather at your exact spot.</p>
   </header>
 
   <main class="layout">
     <section class="panel" aria-label="Field and crop">
+      <div class="step"><b>1</b> Where is your field?</div>
       <div id="map" role="application" aria-label="Map. Click to drop a pin on your field."></div>
       <form id="controls" class="controls">
-        <div class="row two">
+        <div class="row coords">
           <label>Latitude <input id="lat" type="number" step="0.0001" min="-90" max="90" inputmode="decimal" required></label>
           <label>Longitude <input id="lon" type="number" step="0.0001" min="-180" max="180" inputmode="decimal" required></label>
+          <button type="button" id="locate" class="ghost" title="Use my location" aria-label="Use my location">
+            <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><circle cx="12" cy="12" r="6" fill="none" stroke="currentColor" stroke-width="2"/><circle cx="12" cy="12" r="2" fill="currentColor"/><path d="M12 2v4M12 18v4M2 12h4M18 12h4" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+          </button>
         </div>
-        <button type="button" id="locate" class="ghost">Use my location</button>
+        <div class="step inline"><b>2</b> What are you planting?</div>
+        <div id="cropChips" class="chips" role="radiogroup" aria-label="Crop"></div>
+        <select id="crop" hidden aria-hidden="true" tabindex="-1"></select>
         <div class="row two">
-          <label>Crop <select id="crop"></select></label>
-          <label>Maturity <select id="maturity"></select></label>
+          <label>Maturity class <select id="maturity"></select></label>
+          <label class="check"><input id="irrigated" type="checkbox"> <span>Irrigated field<br><span class="hint">ignore rainfall limits</span></span></label>
         </div>
-        <label class="check"><input id="irrigated" type="checkbox"> Irrigated field <span class="hint">(ignore rainfall limits)</span></label>
         <button type="submit" id="go" class="primary">Find my planting window</button>
       </form>
-      <p class="fine">Click the map to drop a pin. Weather: NASA POWER daily data, 1981 to this week, on a roughly 50 km grid.</p>
+      <p class="fine">Weather: NASA POWER daily data, 1981 to this week, on a roughly 50 km grid.</p>
     </section>
 
     <section class="results" aria-live="polite">
-      <div id="status" class="status">
-        <h2>Drop a pin to begin</h2>
-        <p>Pick your field on the map and choose a crop. Seedline replays every planting date in every year since 1981 against the weather that actually followed, then tells you when planting has been safe, how that has shifted, and what to do this season.</p>
+      <div id="welcome" class="welcome">
+        <h2>Start with a pin, or try a field we know</h2>
+        <p>Every planting date in every year since 1981 gets replayed against the weather that actually followed. You get a window, a risk score, and the reasons it fails.</p>
+        <div class="examples">
+          <button type="button" data-example="42.03,-93.63,maize"><span aria-hidden="true">🌽</span><b>Maize</b>Central Iowa, USA</button>
+          <button type="button" data-example="13.5,2.1,millet"><span aria-hidden="true">🌿</span><b>Pearl millet</b>Niamey, Niger</button>
+          <button type="button" data-example="-15.4,28.3,maize"><span aria-hidden="true">🌽</span><b>Maize</b>Lusaka, Zambia</button>
+          <button type="button" data-example="52.1,-106.6,wheat"><span aria-hidden="true">🌾</span><b>Spring wheat</b>Saskatchewan, Canada</button>
+          <button type="button" data-example="-33.9,-60.6,soybean"><span aria-hidden="true">🫘</span><b>Soybean</b>Pampas, Argentina</button>
+          <button type="button" data-example="30.9,75.85,maize"><span aria-hidden="true">🌽</span><b>Maize</b>Punjab, India</button>
+        </div>
       </div>
+      <div id="status" class="status" hidden></div>
       <div id="output" hidden>
         <article class="card rec" id="rec"></article>
         <article class="card">
-          <h2>What goes wrong, by planting date</h2>
-          <p class="sub" id="riskSub"></p>
+          <div class="cardhead"><span class="num">01</span><div><h2>What goes wrong, by planting date</h2>
+          <p class="sub" id="riskSub"></p></div></div>
           <div class="legend" id="riskLegend"></div>
           <div class="chart" id="riskChart"></div>
         </article>
         <article class="card">
-          <h2>How the window has moved</h2>
-          <p class="sub" id="shiftSub"></p>
+          <div class="cardhead"><span class="num">02</span><div><h2>How the window has moved</h2>
+          <p class="sub" id="shiftSub"></p></div></div>
+          <div id="thenNow"></div>
           <div class="legend" id="shiftLegend"></div>
           <div class="chart" id="shiftChart"></div>
           <div class="tiles" id="trendTiles"></div>
         </article>
         <article class="card">
-          <h2>Every year, every planting date</h2>
-          <p class="sub">Each row is one season; each column a planting date. Colour shows how a crop sown that day would have fared in the weather that followed.</p>
+          <div class="cardhead"><span class="num">03</span><div><h2>Every year, every planting date</h2>
+          <p class="sub">Each row is one season; each column a planting date. Colour shows how a crop sown that day would have fared in the weather that followed.</p></div></div>
           <div class="legend" id="heatLegend"></div>
           <div class="chart heat" id="heatChart"><canvas id="heat"></canvas></div>
           <details>
@@ -68,7 +99,7 @@
           </details>
         </article>
         <article class="card method">
-          <h2>How this is worked out</h2>
+          <div class="cardhead"><span class="num">04</span><div><h2>How this is worked out</h2></div></div>
           <ul>
             <li><b>Replay, not averages.</b> For each year and each possible planting day, the crop is grown through the real weather: it must germinate (7-day mean temperature above the crop's minimum), find moisture (soil-water balance from rain and Hargreaves evapotranspiration), escape frost after emergence, avoid heat at flowering, and collect enough growing-degree days to mature in time.</li>
             <li><b>Window.</b> The recommended window is the run of planting dates with at least an 80% chance of success, weighting recent years most (15-year e-folding) so it reflects today's climate.</li>
