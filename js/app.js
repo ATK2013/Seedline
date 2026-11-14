@@ -20,28 +20,47 @@ const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&l
 
 // ------------------------------------------------------------------ controls
 
+const ICON = { maize: '🌽', soybean: '🫘', wheat: '🌾', sorghum: '🌱', millet: '🌿', cotton: '☁️', potato: '🥔', bean: '🫛', sunflower: '🌻' };
 for (const [k, c] of Object.entries(CROPS)) $('crop').add(new Option(c.name, k));
+$('cropChips').innerHTML = Object.entries(CROPS).map(([k, c]) => `<button type="button" role="radio" class="chip" data-crop="${k}"><span aria-hidden="true">${ICON[k]}</span>${c.name.replace(/ \(.*\)/, '')}</button>`).join('');
+function syncChips() {
+  for (const b of $('cropChips').children) b.setAttribute('aria-checked', String(b.dataset.crop === $('crop').value));
+}
+$('cropChips').addEventListener('click', (e) => {
+  const b = e.target.closest('[data-crop]');
+  if (!b) return;
+  $('crop').value = b.dataset.crop;
+  syncChips();
+  if (pin) run();
+});
+syncChips();
 for (const [k, m] of Object.entries(MATURITY)) $('maturity').add(new Option(m.name, k));
 $('maturity').value = 'medium';
 
 const map = L.map('map', { worldCopyJump: true }).setView([20, 10], 2);
-L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
+const streets = L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
   maxZoom: 17,
   attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors',
 }).addTo(map);
+const satellite = L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', {
+  maxZoom: 17,
+  attribution: 'Imagery &copy; Esri, Maxar, Earthstar Geographics',
+});
+L.control.layers({ Map: streets, Satellite: satellite }, null, { collapsed: false }).addTo(map);
+const pinIcon = L.divIcon({ className: 'pin', html: '<svg viewBox="0 0 32 42" width="32" height="42"><path d="M16 41C16 41 30 25.5 30 15A14 14 0 0 0 2 15C2 25.5 16 41 16 41Z" fill="var(--accent)" stroke="#fff" stroke-width="2"/><path d="M16 23v-8m0 1c0-4-2.5-5.5-5.5-5.5 0 3.5 2 5.500 5.500 5.500Zm0 2.500c0-3 2-4.500 5-4.500 0 3-2 4.500-5 4.500Z" fill="#fff" stroke="#fff" stroke-width="1.200" stroke-linecap="round"/></svg>', iconSize: [32, 42], iconAnchor: [16, 41] });
 let pin = null;
 
 function setPin(lat, lon, { pan = false } = {}) {
   lon = ((lon + 540) % 360) - 180;
   $('lat').value = lat.toFixed(4);
   $('lon').value = lon.toFixed(4);
-  if (!pin) pin = L.marker([lat, lon]).addTo(map); else pin.setLatLng([lat, lon]);
+  if (!pin) pin = L.marker([lat, lon], { icon: pinIcon }).addTo(map); else pin.setLatLng([lat, lon]);
   if (pan) map.setView([lat, lon], Math.max(map.getZoom(), 7));
 }
 
 map.on('click', (e) => { setPin(e.latlng.lat, e.latlng.lng); run(); });
 $('controls').addEventListener('submit', (e) => { e.preventDefault(); setPin(+$('lat').value, +$('lon').value, { pan: true }); run(); });
-for (const id of ['crop', 'maturity', 'irrigated']) $(id).addEventListener('change', () => { if (pin) run(); });
+for (const id of ['maturity', 'irrigated']) $(id).addEventListener('change', () => { if (pin) run(); });
 $('locate').addEventListener('click', () => {
   if (!navigator.geolocation) return showStatus('Location unavailable', 'This browser cannot share a location. Click the map instead.');
   navigator.geolocation.getCurrentPosition(
@@ -50,12 +69,21 @@ $('locate').addEventListener('click', () => {
   );
 });
 
-function showStatus(title, body, isError = false) {
+function showStatus(title, body, kind = 'info') {
+  $('welcome').hidden = true;
   const el = $('status');
   el.hidden = false;
-  el.classList.toggle('error', isError);
-  el.innerHTML = `<h2>${esc(title)}</h2><p>${esc(body)}</p>`;
+  el.className = `status ${kind}`;
+  el.innerHTML = `${kind === 'loading' ? '<div class="sprout" aria-hidden="true"><i></i><i></i><i></i></div>' : ''}<h2>${esc(title)}</h2><p>${esc(body)}</p>${kind === 'loading' ? '<div class="progress"><span></span></div>' : ''}`;
 }
+
+document.querySelectorAll('[data-example]').forEach((b) => b.addEventListener('click', () => {
+  const [lat, lon, crop] = b.dataset.example.split(',');
+  $('crop').value = crop;
+  syncChips();
+  setPin(+lat, +lon, { pan: true });
+  run();
+}));
 
 // ---------------------------------------------------------------------- run
 
@@ -69,7 +97,8 @@ async function run() {
   const cropKey = $('crop').value, maturity = $('maturity').value, irrigated = $('irrigated').checked;
   location.hash = `${lat.toFixed(4)},${lon.toFixed(4)},${cropKey},${maturity},${irrigated ? 1 : 0}`;
   $('go').disabled = true;
-  showStatus('Fetching 45 years of daily weather…', `NASA POWER, ${lat.toFixed(2)}°, ${lon.toFixed(2)}°. This usually takes a few seconds.`);
+  $('output').hidden = true;
+  showStatus('Replaying 45 years of weather…', `Fetching about 16,000 days from NASA for ${lat.toFixed(2)}°, ${lon.toFixed(2)}° and growing ${CROPS[cropKey].name.replace(/ \(.*\)/, '').toLowerCase()} through every one of them.`, 'loading');
   try {
     const json = await fetchDaily(lat, lon);
     if (id !== runId) return;
@@ -85,7 +114,7 @@ async function run() {
   } catch (e) {
     if (id !== runId) return;
     $('output').hidden = true;
-    showStatus('Could not load weather for this spot', `${e.message || e}. Check your connection and try again.`, true);
+    showStatus('Could not load weather for this spot', `${e.message || e}. Check your connection and try again.`, 'error');
   } finally {
     if (id === runId) $('go').disabled = false;
   }
@@ -122,20 +151,68 @@ function shiftSentence() {
   return `Compared with ${firstYear}–${firstYear + 19}, the window of the last 15 years (${lastYear - 14}–${lastYear}) ${part(b.open - a.open, 'opens')} and ${part(b.close - a.close, 'closes')}.`;
 }
 
+const BAND_COLOR = { low: '--good', moderate: '--warning', high: '--serious', 'very-high': '--critical' };
+const reduceMotion = matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+/** Half-dial risk gauge; the arc sweeps in and the number counts up. */
+function gaugeSvg(risk, band) {
+  const len = Math.PI * 54;
+  return `<svg class="gauge" viewBox="0 0 140 86" role="img" aria-label="Risk score ${risk} out of 100, ${band.label}">
+    <path d="M16 74A54 54 0 0 1 124 74" fill="none" stroke="var(--surface-2)" stroke-width="12" stroke-linecap="round"/>
+    <path class="arc" d="M16 74A54 54 0 0 1 124 74" fill="none" stroke="var(${BAND_COLOR[band.key]})" stroke-width="12" stroke-linecap="round" stroke-dasharray="${len}" stroke-dashoffset="${len}" data-to="${len * (1 - Math.max(0.03, risk / 100))}"/>
+    <text class="num" x="70" y="70" text-anchor="middle" data-count="${risk}">${reduceMotion ? risk : 0}</text>
+  </svg>`;
+}
+function animateGauge(el) {
+  const arc = el.querySelector('.arc'), num = el.querySelector('.num');
+  if (!arc) return;
+  if (reduceMotion) { arc.setAttribute('stroke-dashoffset', arc.dataset.to); return; }
+  requestAnimationFrame(() => requestAnimationFrame(() => arc.setAttribute('stroke-dashoffset', arc.dataset.to)));
+  const to = +num.dataset.count, t0 = performance.now();
+  const tick = (t) => {
+    const k = Math.min(1, (t - t0) / 900);
+    num.textContent = Math.round(to * (1 - (1 - k) ** 3));
+    if (k < 1) requestAnimationFrame(tick);
+  };
+  requestAnimationFrame(tick);
+}
+
+/** A year at a glance: greener = better odds for planting that day. */
+function ribbonHtml(rec) {
+  const ok = current.result.curves.recent[OUT.OK];
+  const pos = (o) => `${((((o % 365) + 365) % 365) / 365) * 100}%`;
+  let cells = '';
+  for (let o = 0; o < SEASON_DAYS; o += 3) cells += `<i style="opacity:${(0.06 + 0.94 * ok[o]).toFixed(2)}"></i>`;
+  const months = monthTicks(current.result).map((t) => `<span style="left:${pos(t.o)}">${t.label}</span>`).join('');
+  const today = Math.round((rec.now.dateMs - rec.seasonStartMs) / DAY);
+  const marks = [`<div class="mark today" style="left:${pos(today)}"><b>Today</b></div>`];
+  if (rec.viable) {
+    marks.push(`<div class="bracket" style="left:${pos(rec.open)};width:${((rec.close - rec.open) / 365) * 100}%"></div>`);
+    marks.push(`<div class="mark best" style="left:${pos(rec.best)}"><b>Best day</b></div>`);
+    const mat = rec.best + rec.cycleDays;
+    if (mat < 365) marks.push(`<div class="mark harvest" style="left:${pos(mat)}"><b>Mature</b></div>`);
+  }
+  return `<div class="ribbon" role="img" aria-label="Chance of success by planting date across the year"><div class="strip">${cells}</div>${marks.join('')}<div class="months">${months}</div></div>
+    <div class="ribbonkey"><span>Poor odds</span><i></i><span>Good odds for planting that day</span></div>`;
+}
+
 function renderRec() {
   const { result, crop, irrigated } = current;
   const rec = result.rec;
   const el = $('rec');
   const name = crop.name.replace(/ \(.*\)/, '').toLowerCase();
+  const icon = ICON[$('crop').value];
   if (!rec || !rec.viable) {
     const why = rec ? topReasons(rec.reasons, 2) : [];
     const dry = why.some((w) => w.key === 'dry' || w.key === 'drought');
+    el.className = 'card rec nogo';
     el.innerHTML = `
-      <div class="eyebrow">Recommendation</div>
-      <div class="headline">${esc(crop.name)} is not a safe bet here</div>
+      <div class="eyebrow">Recommendation · ${current.lat.toFixed(2)}°, ${current.lon.toFixed(2)}°</div>
+      <div class="headline"><span class="cropicon" aria-hidden="true">${icon}</span>${esc(crop.name.replace(/ \(.*\)/, ''))} is not a safe bet here</div>
       <p class="lede">${rec ? `Even on the best planting date (around ${lab(rec.best)}), a ${name} crop would have succeeded in only ${pct(rec.pMax)} of recent seasons.` : `No planting date in any year on record would have carried a ${name} crop to maturity at this spot.`}
       ${why.length ? ` The main obstacle: ${why.map((w) => w.label.toLowerCase()).join(', then ')}.` : ''}
-      ${dry && !irrigated ? ' If this field is irrigated, tick “Irrigated field” to lift the rainfall limits.' : ' Try an earlier-maturing class or a different crop.'}</p>`;
+      ${dry && !irrigated ? ' If this field is irrigated, tick “Irrigated field” to lift the rainfall limits.' : ' Try an earlier-maturing class or a different crop.'}</p>
+      ${rec ? ribbonHtml(rec) : ''}`;
     return;
   }
   const band = riskBand(rec.risk);
@@ -149,17 +226,18 @@ function renderRec() {
   } else {
     timing = `The window opens in <b>${rec.daysToOpen} days</b>. Latest weather on record (${new Date(n.dateMs).toLocaleDateString('en-US', { month: 'short', day: 'numeric', timeZone: 'UTC' })}): 7-day mean ${n.tmean7.toFixed(1)} °C, ${n.rain14.toFixed(0)} mm of rain in 14 days.`;
   }
+  el.className = 'card rec';
   el.innerHTML = `
-    <div class="eyebrow">Recommendation · ${esc(rec.seasonLabel)} season · ${current.lat.toFixed(2)}°, ${current.lon.toFixed(2)}°</div>
-    <div class="headline">Plant ${esc(name)} ${esc(seasonDate(rec, rec.open).replace(/, \d+$/, ''))} – ${esc(seasonDate(rec, rec.close))}</div>
-    <p class="lede">Best odds around <b>${esc(lab(rec.best))}</b>. ${esc(shiftSentence())}</p>
-    <div class="riskrow">
-      <div class="riskscore">${rec.risk}<small> / 100 risk</small></div>
+    <div class="rechead">
       <div>
-        <div class="band"><i class="${band.key}"></i>${band.label}</div>
-        <div class="meter" role="img" aria-label="Risk score ${rec.risk} out of 100"><span class="${band.key}" style="width:${Math.max(3, rec.risk)}%"></span></div>
+        <div class="eyebrow">${esc(rec.seasonLabel)} season · ${current.lat.toFixed(2)}°, ${current.lon.toFixed(2)}°</div>
+        <div class="kicker"><span class="cropicon" aria-hidden="true">${icon}</span>Plant ${esc(name)}</div>
+        <div class="headline">${esc(seasonDate(rec, rec.open).replace(/, \d+$/, ''))} <span class="dash">→</span> ${esc(seasonDate(rec, rec.close).replace(/, \d+$/, ''))}</div>
+        <p class="lede">Best odds around <b>${esc(lab(rec.best))}</b>. ${esc(shiftSentence())}</p>
       </div>
+      <div class="gaugebox">${gaugeSvg(rec.risk, band)}<div class="band"><i class="${band.key}"></i>${band.label}</div><div class="gaugecap">risk score out of 100</div></div>
     </div>
+    ${ribbonHtml(rec)}
     <div class="tiles">
       <div class="tile"><div class="k">Chance of a successful crop</div><div class="v">${pct(rec.pMean)}</div><div class="d">planted inside the window</div></div>
       <div class="tile"><div class="k">Expected maturity</div><div class="v">${esc(lab(harvest % 365))}</div><div class="d">about ${Math.round(rec.cycleDays)} days after ${esc(lab(rec.best))}</div></div>
@@ -168,6 +246,17 @@ function renderRec() {
     </div>
     ${why.length ? `<div class="why">When it fails inside the window: ${why.map((w) => `<span><i class="sw" style="background:var(--o-${w.key})"></i>${esc(w.label)} ${pct(w.share)}</span>`).join('')}</div>` : ''}
     <div class="now">${timing}</div>`;
+  animateGauge(el);
+}
+
+/** Then-versus-now strips for the window shift card. */
+function thenNowHtml() {
+  const { windows, firstYear, lastYear } = current.result;
+  const a = windows.early, b = windows.late;
+  if (!a || !b || a.pMax < 0.4 || b.pMax < 0.4) return '';
+  const lo = Math.max(0, Math.min(a.open, b.open) - 12), hi = Math.min(364, Math.max(a.close, b.close) + 12);
+  const row = (w, label, cls) => `<div class="tnrow"><span class="tnlabel">${label}</span><div class="tntrack"><div class="tnbar ${cls}" style="left:${((w.open - lo) / (hi - lo)) * 100}%;width:${Math.max(1.5, ((w.close - w.open) / (hi - lo)) * 100)}%"><em>${esc(lab(w.open))}</em><em>${esc(lab(w.close))}</em></div></div></div>`;
+  return `<div class="thennow">${row(a, `${firstYear}–${String(firstYear + 19).slice(2)}`, 'then')}${row(b, `${lastYear - 14}–${String(lastYear).slice(2)}`, 'nowbar')}</div>`;
 }
 
 // ---------------------------------------------------------------- tooltip
@@ -274,11 +363,12 @@ function renderShift() {
 
   if (withWin.length < 3) {
     $('shiftSub').textContent = 'Too few seasons had any safe planting date to draw a window for each year.';
-    $('shiftLegend').innerHTML = ''; host.innerHTML = '';
+    $('shiftLegend').innerHTML = ''; host.innerHTML = ''; $('thenNow').innerHTML = '';
     return;
   }
   const failed = seasons.filter((s) => s.complete && !Number.isFinite(s.open)).length;
   $('shiftSub').textContent = `Each bar spans the planting dates that would have worked in that one year; the recommended window is narrower because it has to work in most years.${failed ? ` ${failed} season${failed > 1 ? 's' : ''} had no safe date at all and show${failed > 1 ? '' : 's'} no bar.` : ''}`;
+  $('thenNow').innerHTML = thenNowHtml();
   $('shiftLegend').innerHTML = `<span><i class="sw" style="background:var(--window)"></i>Safe planting dates that year</span><span><i class="sw line" style="background:var(--text)"></i>Trend (Theil–Sen)</span>${hasFrost ? '<span><i class="sw dot" style="background:var(--o-frost)"></i>Last spring frost</span>' : ''}`;
 
   const W = Math.max(320, host.clientWidth), H = Math.min(340, Math.max(240, W * 0.4));
@@ -401,6 +491,7 @@ $('csv').addEventListener('click', () => {
 const h = location.hash.slice(1).split(',');
 if (h.length >= 3 && Number.isFinite(+h[0]) && Number.isFinite(+h[1]) && CROPS[h[2]]) {
   $('crop').value = h[2];
+  syncChips();
   if (MATURITY[h[3]]) $('maturity').value = h[3];
   $('irrigated').checked = h[4] === '1';
   setPin(+h[0], +h[1], { pan: true });
