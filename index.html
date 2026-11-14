@@ -9,7 +9,7 @@
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,650&display=swap">
   <link rel="stylesheet" href="vendor/leaflet/leaflet.css">
-  <link rel="stylesheet" href="css/style.css?v=4">
+  <link rel="stylesheet" href="css/style.css?v=5">
 </head>
 <body class="picking">
   <div id="picker" class="picker" aria-label="Choose your field">
@@ -89,14 +89,26 @@
       <div id="status" class="status" hidden></div>
       <div id="output" hidden>
         <article class="card rec" id="rec"></article>
+        <article class="card sat" id="ndviCard">
+          <svg class="orbit" viewBox="0 0 220 220" aria-hidden="true">
+            <circle cx="150" cy="150" r="58"/><ellipse cx="150" cy="150" rx="120" ry="44" transform="rotate(-28 150 150)"/>
+            <g transform="translate(52 62) rotate(-28)"><rect x="-7" y="-7" width="14" height="14" rx="2"/><rect x="-27" y="-5" width="16" height="10" rx="1"/><rect x="11" y="-5" width="16" height="10" rx="1"/></g>
+          </svg>
+          <div class="cardhead"><span class="num">01</span><div><div class="tag">NASA MODIS · 250 m · every 16 days</div><h2>Satellite check</h2>
+          <p class="sub">The window above comes from weather alone. This tests it against what the land actually did: when the pixel under your pin turned green in each of the last 15 seasons.</p></div></div>
+          <div id="ndviBody"></div>
+          <div class="legend" id="ndviLegend"></div>
+          <div class="chart" id="ndviChart"></div>
+          <p class="fine note" id="ndviNote" hidden></p>
+        </article>
         <article class="card">
-          <div class="cardhead"><span class="num">01</span><div><h2>What goes wrong, by planting date</h2>
+          <div class="cardhead"><span class="num">02</span><div><h2>What goes wrong, by planting date</h2>
           <p class="sub" id="riskSub"></p></div></div>
           <div class="legend" id="riskLegend"></div>
           <div class="chart" id="riskChart"></div>
         </article>
         <article class="card">
-          <div class="cardhead"><span class="num">02</span><div><h2>How the window has moved</h2>
+          <div class="cardhead"><span class="num">03</span><div><h2>How the window has moved</h2>
           <p class="sub" id="shiftSub"></p></div></div>
           <div id="thenNow"></div>
           <div class="legend" id="shiftLegend"></div>
@@ -104,7 +116,7 @@
           <div class="tiles" id="trendTiles"></div>
         </article>
         <article class="card">
-          <div class="cardhead"><span class="num">03</span><div><h2>Every year, every planting date</h2>
+          <div class="cardhead"><span class="num">04</span><div><h2>Every year, every planting date</h2>
           <p class="sub">Each row is one season; each column a planting date. Colour shows how a crop sown that day would have fared in the weather that followed.</p></div></div>
           <div class="legend" id="heatLegend"></div>
           <div class="chart heat" id="heatChart"><canvas id="heat"></canvas></div>
@@ -113,14 +125,6 @@
             <div class="tablewrap"><table id="yearTable"></table></div>
             <button type="button" id="csv" class="ghost">Download CSV</button>
           </details>
-        </article>
-        <article class="card" id="ndviCard">
-          <div class="cardhead"><span class="num">04</span><div><h2>Satellite check</h2>
-          <p class="sub">Does the land actually green up when the model says a crop sown in the window should? MODIS NDVI measures greenness for the 250 m pixel under your pin, every 16 days since 2000.</p></div></div>
-          <div id="ndviBody"></div>
-          <div class="legend" id="ndviLegend"></div>
-          <div class="chart" id="ndviChart"></div>
-          <p class="fine note" id="ndviNote" hidden></p>
         </article>
         <article class="card method">
           <div class="cardhead"><span class="num">05</span><div><h2>How this is worked out</h2></div></div>
@@ -139,6 +143,6 @@
   <div id="tip" class="tip" hidden></div>
 
   <script src="vendor/leaflet/leaflet.js"></script>
-  <script type="module" src="js/app.js?v=4"></script>
+  <script type="module" src="js/app.js?v=5"></script>
 </body>
 </html>

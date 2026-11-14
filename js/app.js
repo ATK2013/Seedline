@@ -1,10 +1,10 @@
 // Bump ?v= here and in index.html whenever these files change, so browsers
 // never pair a new page with stale cached scripts or styles.
-import { CROPS, MATURITY } from './crops.js?v=4';
-import { fetchDaily } from './power.js?v=4';
-import { ndviTargets, compareNdvi, TOLERANCE } from './ndvi.js?v=4';
-import { fetchNdvi } from './modis.js?v=4';
-import { parsePower, addWaterBalance, analyze, riskBand, offsetLabel, OUT, SEASON_DAYS } from './analysis.js?v=4';
+import { CROPS, MATURITY } from './crops.js?v=5';
+import { fetchDaily } from './power.js?v=5';
+import { ndviTargets, compareNdvi, TOLERANCE } from './ndvi.js?v=5';
+import { fetchNdvi } from './modis.js?v=5';
+import { parsePower, addWaterBalance, analyze, riskBand, offsetLabel, OUT, SEASON_DAYS } from './analysis.js?v=5';
 
 const $ = (id) => document.getElementById(id);
 const DAY = 86400000;
@@ -176,6 +176,7 @@ function render() {
   renderHeat();
   renderTable();
   if (current.ndvi) renderNdvi(); else resetNdvi();
+  renderSatStrip();
 }
 let resizeTimer;
 window.addEventListener('resize', () => { clearTimeout(resizeTimer); resizeTimer = setTimeout(() => current && render(), 150); });
@@ -286,6 +287,7 @@ function renderRec() {
       <div class="gaugebox">${gaugeSvg(rec.risk, band)}<div class="band"><i class="${band.key}"></i>${band.label}</div><div class="gaugecap">risk score out of 100</div></div>
     </div>
     ${ribbonHtml(rec)}
+    <div id="satStrip" class="satstrip"></div>
     <div class="tiles">
       <div class="tile"><div class="k">Chance of a successful crop</div><div class="v">${pct(rec.pMean)}</div><div class="d">planted inside the window</div></div>
       <div class="tile"><div class="k">Expected maturity</div><div class="v">${esc(lab(harvest % 365))}</div><div class="d">about ${Math.round(rec.cycleDays)} days after ${esc(lab(rec.best))}</div></div>
@@ -522,9 +524,45 @@ function resetNdvi() {
   const n = ndviTargets(current.result).length;
   $('ndviLegend').innerHTML = ''; $('ndviChart').innerHTML = ''; $('ndviNote').hidden = true;
   $('ndviBody').innerHTML = n
-    ? `<div class="ndvistart"><button type="button" id="ndviGo" class="primary">Check the last ${n} seasons against satellite</button><span class="hint">Fetched from NASA one season at a time; it can take a few minutes, and results appear as they arrive.</span></div>`
+    ? `<div class="ndvistart"><button type="button" id="ndviGo" class="primary">Run satellite check on ${n} seasons</button><span class="hint">Fetched from NASA one season at a time; it can take a few minutes, and results appear as they arrive.</span></div>`
     : '<p class="sub">There is no recommended window here to check.</p>';
   $('ndviGo')?.addEventListener('click', runNdvi);
+  renderSatStrip();
+}
+
+const SAT_ICON = '<svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true"><g transform="rotate(-35 12 12)" fill="currentColor"><rect x="9" y="9" width="6" height="6" rx="1"/><rect x="1.500" y="10" width="6" height="4" rx=".5"/><rect x="16.500" y="10" width="6" height="4" rx=".5"/></g><path d="M5 19a6 6 0 0 0 4 1.500M3.500 16.500" fill="none" stroke="currentColor" stroke-width="1.500" stroke-linecap="round"/></svg>';
+
+/** The satellite verdict, surfaced at the top of the recommendation and on the ribbon. */
+function renderSatStrip() {
+  const el = $('satStrip');
+  if (!el) return;
+  const n = ndviTargets(current.result).length;
+  const nd = current.ndvi;
+  const more = '<button type="button" class="ghost" data-sat="more">See the evidence</button>';
+  let cls = 'idle', html;
+  if (!nd) {
+    html = `<div><b>Not yet checked against satellite.</b> See whether this field really greened up on this schedule in the last ${n} seasons.</div><button type="button" class="primary" data-sat="go">Run satellite check</button>`;
+  } else if (!nd.state.finished) {
+    cls = 'busy';
+    html = `<div><b>Checking against satellite…</b> ${nd.state.done} of ${nd.state.total} seasons fetched from NASA.<div class="progress wide"><span style="width:${(nd.state.done / nd.state.total) * 100}%;animation:none"></span></div></div>${more}`;
+  } else if (nd.state.done === nd.state.failed) {
+    html = '<div><b>Satellite check unavailable.</b> NASA\'s service did not answer.</div><button type="button" class="primary" data-sat="go">Try again</button>';
+  } else {
+    const s = nd.cmp.summary;
+    cls = s.verdict;
+    const [title, text] = NDVI_VERDICT[s.verdict] ?? ['Satellite check inconclusive', () => 'Too few seasons showed both a model window and a clear green-up.'];
+    html = `<div><b>${title}.</b> ${esc(text(s))}</div>${more}`;
+  }
+  el.className = `satstrip ${cls}`;
+  el.innerHTML = `<span class="saticon">${SAT_ICON}</span>${html}`;
+  el.querySelector('[data-sat=go]')?.addEventListener('click', () => { runNdvi(); });
+  el.querySelector('[data-sat=more]')?.addEventListener('click', () => $('ndviCard').scrollIntoView({ behavior: reduceMotion ? 'auto' : 'smooth', block: 'start' }));
+
+  // Mark the observed green-up on the season ribbon.
+  const ribbon = $('rec').querySelector('.ribbon');
+  ribbon?.querySelector('.mark.green')?.remove();
+  const g = nd?.cmp.summary.medianGreen;
+  if (ribbon && Number.isFinite(g)) ribbon.insertAdjacentHTML('beforeend', `<div class="mark green" style="left:${((((g % 365) + 365) % 365) / 365) * 100}%"><b>Green-up seen</b></div>`);
 }
 
 async function runNdvi() {
@@ -592,6 +630,7 @@ function renderNdvi() {
   // Chart: the model's safe dates per year (bars) against satellite-implied sowing (dots).
   const host = $('ndviChart');
   const rows = cmp.years;
+  renderSatStrip();
   if (!s.greened || rows.length < 2) { host.innerHTML = ''; $('ndviLegend').innerHTML = ''; return; }
   $('ndviLegend').innerHTML = '<span><i class="sw" style="background:var(--window)"></i>Dates the model called safe</span><span><i class="sw dot" style="background:var(--o-short)"></i>Satellite-implied sowing, inside</span><span><i class="sw dot ring"></i>Outside</span>';
   const W = Math.max(320, host.clientWidth), H = Math.min(300, Math.max(220, W * 0.34));
