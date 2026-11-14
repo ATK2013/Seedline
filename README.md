@@ -53,6 +53,16 @@ autumn frost, season heat and rainfall are tested with a Theil–Sen slope and a
 Mann–Kendall significance test, and the 1981–2000 window is compared with the
 last 15 years.
 
+**Satellite check.** On request, the app pulls MODIS NDVI (MOD13Q1, 250 m,
+16-day) for the pixel under the pin from NASA's
+[ORNL DAAC subset service](https://modis.ornl.gov/data/modis_webservice.html),
+for the last 15 seasons. Green-up is the date NDVI is halfway from its
+pre-season low to its peak; stepping back by emergence plus about 30 days
+gives a satellite-implied sowing date, which is compared with the dates the
+weather model called safe in that same year (`js/ndvi.js`). The service
+returns 10 composites per request and can be slow, so seasons are fetched two
+at a time, shown as they arrive, and cached in the browser.
+
 ## Layout
 
 | Path | What |
@@ -60,6 +70,8 @@ last 15 years.
 | `js/analysis.js` | The model: water balance, crop replay, windows, trends. No DOM. |
 | `js/crops.js` | Crop parameters (GDD base and target, frost and heat limits). |
 | `js/power.js` | NASA POWER fetch. |
+| `js/ndvi.js` | Satellite check: green-up dating and comparison with the model. No DOM. |
+| `js/modis.js` | MODIS NDVI fetch with retry and browser cache. |
 | `js/app.js` | Map, controls and charts. |
 | `test/` | Unit tests on synthetic climates. |
 | `vendor/leaflet/` | Leaflet 1.9.4 (BSD-2-Clause), vendored so the demo has no CDN dependency. |
@@ -73,11 +85,14 @@ last 15 years.
   `js/crops.js` for local varieties.
 - The soil is one 100 mm bucket everywhere. Irrigated fields should tick
   "Irrigated field", which lifts the rainfall rules.
+- The satellite check sees one 250 m pixel, which may be pasture, trees or a
+  different crop, and its dates are good to about ±8 days. The 30-day
+  green-up lag is a rule of thumb.
 - Only spring-sown, single-season crops are modelled (no winter wheat, no
   paddy rice).
 
 ## Next
 
-- Check each year's replayed outcome against satellite greenness (MODIS NDVI)
-  for the same pixel.
-- Place search, and units in °F and inches.
+- Screen NDVI with the MODIS pixel-reliability band instead of the simple
+  dip filter, and average a few pixels around the pin.
+- Units in °F and inches.

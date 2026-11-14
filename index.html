@@ -9,7 +9,7 @@
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,650&display=swap">
   <link rel="stylesheet" href="vendor/leaflet/leaflet.css">
-  <link rel="stylesheet" href="css/style.css?v=3">
+  <link rel="stylesheet" href="css/style.css?v=4">
 </head>
 <body class="picking">
   <div id="picker" class="picker" aria-label="Choose your field">
@@ -114,13 +114,22 @@
             <button type="button" id="csv" class="ghost">Download CSV</button>
           </details>
         </article>
+        <article class="card" id="ndviCard">
+          <div class="cardhead"><span class="num">04</span><div><h2>Satellite check</h2>
+          <p class="sub">Does the land actually green up when the model says a crop sown in the window should? MODIS NDVI measures greenness for the 250 m pixel under your pin, every 16 days since 2000.</p></div></div>
+          <div id="ndviBody"></div>
+          <div class="legend" id="ndviLegend"></div>
+          <div class="chart" id="ndviChart"></div>
+          <p class="fine note" id="ndviNote" hidden></p>
+        </article>
         <article class="card method">
-          <div class="cardhead"><span class="num">04</span><div><h2>How this is worked out</h2></div></div>
+          <div class="cardhead"><span class="num">05</span><div><h2>How this is worked out</h2></div></div>
           <ul>
             <li><b>Replay, not averages.</b> For each year and each possible planting day, the crop is grown through the real weather: it must germinate (7-day mean temperature above the crop's minimum), find moisture (soil-water balance from rain and Hargreaves evapotranspiration), escape frost after emergence, avoid heat at flowering, and collect enough growing-degree days to mature in time.</li>
             <li><b>Window.</b> The recommended window is the run of planting dates with at least an 80% chance of success, weighting recent years most (15-year e-folding) so it reflects today's climate.</li>
             <li><b>Risk score.</b> 100 minus the average chance of success across the window.</li>
             <li><b>Trends.</b> Theil–Sen slopes with a Mann–Kendall test; a trend is called significant at p &lt; 0.05.</li>
+            <li><b>Satellite check.</b> For each recent season, green-up is the date NDVI is halfway from its pre-season low to its peak. Stepping back by the crop's emergence time plus about 30 days gives a satellite-implied sowing date, which is compared with the dates the weather model called safe that year.</li>
             <li><b>Limits.</b> Weather is a ~50 km grid average, so frost pockets, slopes and local soils are not seen; crop numbers are generic defaults, not your variety. Use this alongside local knowledge, not instead of it.</li>
           </ul>
         </article>
@@ -130,6 +139,6 @@
   <div id="tip" class="tip" hidden></div>
 
   <script src="vendor/leaflet/leaflet.js"></script>
-  <script type="module" src="js/app.js?v=3"></script>
+  <script type="module" src="js/app.js?v=4"></script>
 </body>
 </html>

@@ -96,3 +96,49 @@ test('southern hemisphere seasons run July to June', () => {
   assert.equal(r.seasons[0].label, '1981/82');
   assert.ok(r.rec.open > 90 && r.rec.close < 200);
 });
+
+// ------------------------------------------------------- satellite check
+import { compositeDates, greenUp, spearman, ndviTargets, compareNdvi } from '../js/ndvi.js';
+
+test('compositeDates follows the MODIS 16-day calendar across a year end', () => {
+  const d = compositeDates(Date.UTC(2020, 11, 1), 4).map((c) => c.modis);
+  assert.deepEqual(d, ['A2020337', 'A2020353', 'A2021001', 'A2021017']);
+  assert.equal(compositeDates(Date.UTC(2020, 2, 22), 10)[0].modis, 'A2020097');
+});
+
+/** A logistic green-up centred on `midMs`, sampled every 16 days. */
+function ndviSeries(startMs, midMs, { lo = 0.2, hi = 0.85 } = {}) {
+  return compositeDates(startMs, 10).map((c) => ({ ms: c.ms, ndvi: lo + (hi - lo) / (1 + Math.exp(-(c.ms + 8 * DAY - midMs) / (9 * DAY))) }));
+}
+
+test('greenUp dates the half-amplitude crossing and ignores a cloud dip', () => {
+  const mid = Date.UTC(2020, 5, 10);
+  const pts = ndviSeries(Date.UTC(2020, 2, 22), mid);
+  const g = greenUp(pts);
+  assert.ok(Math.abs(g.ms - mid) < 5 * DAY, `off by ${(g.ms - mid) / DAY} days`);
+  pts[6].ndvi -= 0.35;   // one cloudy composite on the rising limb
+  assert.ok(Math.abs(greenUp(pts).ms - mid) < 9 * DAY);
+  assert.equal(greenUp(pts.map((p) => ({ ...p, ndvi: 0.3 }))), null);
+});
+
+test('spearman is 1 for a monotonic relation and -1 for its reverse', () => {
+  const a = [3, 1, 4, 1.5, 9, 2.6];
+  assert.ok(Math.abs(spearman(a, a.map((v) => v * v)) - 1) < 1e-9);
+  assert.ok(Math.abs(spearman(a, a.map((v) => -v)) + 1) < 1e-9);
+});
+
+test('compareNdvi agrees when green-up follows sowing in the window, and flags an early pixel', () => {
+  const r = analyze(synthetic(), CROPS.maize, 45);
+  const targets = ndviTargets(r, 10);
+  assert.equal(targets.length, 10);
+  const lag = CROPS.maize.emerge + 30;
+  const season = (y) => r.seasons.find((s) => s.year === y);
+  const obs = (shift) => targets.map((t) => ({ year: t.year, points: ndviSeries(t.dates[0].ms, season(t.year).startMs + (r.rec.best + lag + shift) * DAY) }));
+  const ok = compareNdvi(r, CROPS.maize, obs(0));
+  assert.equal(ok.summary.verdict, 'agrees');
+  assert.ok(Math.abs(ok.summary.offset) < 6);
+  const early = compareNdvi(r, CROPS.maize, obs(-70));
+  assert.equal(early.summary.verdict, 'earlier');
+  const flat = compareNdvi(r, CROPS.maize, targets.map((t) => ({ year: t.year, points: t.dates.map((c) => ({ ms: c.ms, ndvi: 0.25 })) })));
+  assert.equal(flat.summary.verdict, 'no-crop');
+});

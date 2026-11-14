@@ -247,6 +247,16 @@ h2 { font-family: var(--display); font-weight: 650; font-size: 21px; letter-spac
 .tip div { display: flex; align-items: center; gap: 6px; color: var(--text-2); }
 .tip div em { margin-left: auto; font-style: normal; color: var(--text); padding-left: 12px; font-variant-numeric: tabular-nums; }
 
+.ndvistart, .ndviprog { display: flex; flex-wrap: wrap; align-items: center; gap: 10px 14px; margin-top: 14px; }
+.progress.wide { flex: 1 1 220px; max-width: none; margin: 0; }
+.progress.wide span { transition: width .4s; }
+.verdict { margin-top: 14px; padding: 12px 14px; border-radius: 12px; border-left: 4px solid var(--text-3); background: var(--surface-2); color: var(--text-2); font-size: 14.5px; }
+.verdict b { color: var(--text); }
+.verdict.agrees { border-left-color: var(--good); }
+.verdict.partly { border-left-color: var(--warning); }
+.verdict.earlier, .verdict.later { border-left-color: var(--serious); }
+.sw.dot.ring { background: var(--surface); box-shadow: inset 0 0 0 2px var(--o-short); }
+.fine.note { padding: 8px 0 0; }
 details { margin-top: 12px; }
 summary { cursor: pointer; color: var(--text-2); font-size: 14px; }
 .tablewrap { overflow: auto; max-height: 320px; margin: 10px 0; border: 1px solid var(--line); border-radius: 10px; }

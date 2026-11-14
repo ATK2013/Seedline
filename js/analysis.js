@@ -184,7 +184,7 @@ function seasonStarts(s, lat) {
   const out = [];
   for (let y = y0; y <= yN; y++) {
     const idx = Math.round((Date.UTC(y, month, 1) - s.t0) / DAY);
-    if (idx >= 0 && idx < s.n) out.push({ year: y, idx, label: lat >= 0 ? String(y) : `${y}/${String(y + 1).slice(2)}` });
+    if (idx >= 0 && idx < s.n) out.push({ year: y, idx, startMs: s.t0 + idx * DAY, label: lat >= 0 ? String(y) : `${y}/${String(y + 1).slice(2)}` });
   }
   return out;
 }

@@ -1,8 +1,10 @@
 // Bump ?v= here and in index.html whenever these files change, so browsers
 // never pair a new page with stale cached scripts or styles.
-import { CROPS, MATURITY } from './crops.js?v=3';
-import { fetchDaily } from './power.js?v=3';
-import { parsePower, addWaterBalance, analyze, riskBand, offsetLabel, OUT, SEASON_DAYS } from './analysis.js?v=3';
+import { CROPS, MATURITY } from './crops.js?v=4';
+import { fetchDaily } from './power.js?v=4';
+import { ndviTargets, compareNdvi, TOLERANCE } from './ndvi.js?v=4';
+import { fetchNdvi } from './modis.js?v=4';
+import { parsePower, addWaterBalance, analyze, riskBand, offsetLabel, OUT, SEASON_DAYS } from './analysis.js?v=4';
 
 const $ = (id) => document.getElementById(id);
 const DAY = 86400000;
@@ -137,6 +139,8 @@ async function run() {
   const lat = +$('lat').value, lon = +$('lon').value;
   if (!Number.isFinite(lat) || !Number.isFinite(lon) || Math.abs(lat) > 90) return;
   const id = ++runId;
+  ndviRun++;
+  ndviAbort?.abort();
   const cropKey = $('crop').value, maturity = $('maturity').value, irrigated = $('irrigated').checked;
   location.hash = `${lat.toFixed(4)},${lon.toFixed(4)},${cropKey},${maturity},${irrigated ? 1 : 0}`;
   $('go').disabled = true;
@@ -171,6 +175,7 @@ function render() {
   renderShift();
   renderHeat();
   renderTable();
+  if (current.ndvi) renderNdvi(); else resetNdvi();
 }
 let resizeTimer;
 window.addEventListener('resize', () => { clearTimeout(resizeTimer); resizeTimer = setTimeout(() => current && render(), 150); });
@@ -506,6 +511,118 @@ function renderHeat() {
     showTip(e, `<b>${esc(seasons[k].label)} · planted ${esc(lab(o))}</b><div>${c > 0 ? `<i class="sw" style="background:var(--o-${byCode[c].key})"></i>` : ''}${what}</div>`);
   };
   canvas.onpointerleave = hideTip;
+}
+
+// ---------------------------------------------------------- satellite check
+
+let ndviRun = 0;
+let ndviAbort = null;
+
+function resetNdvi() {
+  const n = ndviTargets(current.result).length;
+  $('ndviLegend').innerHTML = ''; $('ndviChart').innerHTML = ''; $('ndviNote').hidden = true;
+  $('ndviBody').innerHTML = n
+    ? `<div class="ndvistart"><button type="button" id="ndviGo" class="primary">Check the last ${n} seasons against satellite</button><span class="hint">Fetched from NASA one season at a time; it can take a few minutes, and results appear as they arrive.</span></div>`
+    : '<p class="sub">There is no recommended window here to check.</p>';
+  $('ndviGo')?.addEventListener('click', runNdvi);
+}
+
+async function runNdvi() {
+  const id = ++ndviRun;
+  const run = current;
+  const { result, crop, lat, lon } = run;
+  const targets = ndviTargets(result);
+  const observed = [];
+  const ctrl = new AbortController();
+  ndviAbort = ctrl;
+  const state = { done: 0, failed: 0, total: targets.length, finished: false };
+  const update = () => {
+    if (id !== ndviRun) return;
+    run.ndvi = { cmp: compareNdvi(result, crop, observed), state };
+    renderNdvi();
+  };
+  update();
+  const queue = [...targets];
+  // Two at a time: the service starts refusing requests beyond that.
+  await Promise.all([0, 1].map(async () => {
+    for (let t; id === ndviRun && (t = queue.shift());) {
+      try { observed.push({ year: t.year, points: await fetchNdvi(lat, lon, t.dates, ctrl.signal) }); } catch { state.failed++; }
+      state.done++;
+      update();
+    }
+  }));
+  state.finished = true;
+  update();
+}
+
+const NDVI_VERDICT = {
+  agrees: ['Satellite agrees', (s) => `In ${s.inside} of ${s.judged} seasons the field greened up when a crop sown inside the model's safe dates would have.`],
+  partly: ['Partial agreement', (s) => `In ${s.inside} of ${s.judged} seasons the green-up matched a crop sown inside the model's safe dates; in the rest it came ${s.offset < 0 ? 'earlier' : 'later'}.`],
+  earlier: ['Greens up earlier than the model expects', (s) => `Only ${s.inside} of ${s.judged} seasons matched. The land turns green about ${Math.abs(Math.round(s.offset))} days ahead of a crop sown on the recommended best day: farmers here may sow earlier, or this pixel is pasture, trees or a winter crop.`],
+  later: ['Greens up later than the model expects', (s) => `Only ${s.inside} of ${s.judged} seasons matched. The land turns green about ${Math.round(s.offset)} days behind a crop sown on the recommended best day: farmers here may sow later, or grow a different crop.`],
+  'no-crop': ['This pixel does not look like cropland', (s) => `Only ${s.greened} of ${s.checked} seasons showed a clear seasonal green-up. Try moving the pin onto a field.`],
+};
+
+function renderNdvi() {
+  const { cmp, state } = current.ndvi;
+  const s = cmp.summary;
+  let html = '';
+  if (!state.finished) html += `<div class="ndviprog"><div class="progress wide"><span style="width:${(state.done / state.total) * 100}%;animation:none"></span></div><span class="hint">Fetched ${state.done} of ${state.total} seasons from NASA… each can take up to a minute.</span></div>`;
+  if (state.finished && state.done === state.failed) {
+    html += '<p class="sub">NASA\'s MODIS service did not answer. <button type="button" id="ndviGo" class="ghost">Try again</button></p>';
+  } else if (NDVI_VERDICT[s.verdict]) {
+    const [title, text] = NDVI_VERDICT[s.verdict];
+    html += `<div class="verdict ${s.verdict}"><b>${title}${state.finished ? '' : ' so far'}.</b> ${esc(text(s))}</div>`;
+  }
+  if (s.greened) {
+    const off = Math.round(s.offset);
+    const strength = !Number.isFinite(s.rho) ? null : s.rho >= 0.5 ? 'Strong' : s.rho >= 0.25 ? 'Moderate' : s.rho > -0.25 ? 'Weak' : 'Opposite';
+    html += `<div class="tiles">
+      <div class="tile"><div class="k">Typical green-up</div><div class="v">${esc(lab(Math.round(s.medianGreen)))}</div><div class="d">halfway to peak greenness</div></div>
+      <div class="tile"><div class="k">Satellite-implied sowing</div><div class="v">${esc(lab(Math.round(s.medianImplied)))}</div><div class="d">${Math.abs(off) < 2 ? 'on' : `${Math.abs(off)} days ${off < 0 ? 'before' : 'after'}`} the recommended best day</div></div>
+      ${strength ? `<div class="tile"><div class="k">Early years match early years</div><div class="v">${strength}</div><div class="d">rank correlation ${s.rho.toFixed(2)} between model and satellite</div></div>` : ''}
+      <div class="tile"><div class="k">Peak greenness</div><div class="v">${s.medianPeak.toFixed(2)}</div><div class="d">NDVI; dense crops reach 0.8 or more</div></div>
+    </div>`;
+  }
+  $('ndviBody').innerHTML = html;
+  $('ndviGo')?.addEventListener('click', runNdvi);
+  $('ndviNote').hidden = !s.greened;
+  $('ndviNote').textContent = `Implied sowing is green-up minus ${s.lag} days (emergence plus about 30 days to mid green-up). Dates from 16-day composites are good to about ±${TOLERANCE} days.${state.failed ? ` ${state.failed} season${state.failed > 1 ? 's' : ''} could not be fetched.` : ''}`;
+
+  // Chart: the model's safe dates per year (bars) against satellite-implied sowing (dots).
+  const host = $('ndviChart');
+  const rows = cmp.years;
+  if (!s.greened || rows.length < 2) { host.innerHTML = ''; $('ndviLegend').innerHTML = ''; return; }
+  $('ndviLegend').innerHTML = '<span><i class="sw" style="background:var(--window)"></i>Dates the model called safe</span><span><i class="sw dot" style="background:var(--o-short)"></i>Satellite-implied sowing, inside</span><span><i class="sw dot ring"></i>Outside</span>';
+  const W = Math.max(320, host.clientWidth), H = Math.min(300, Math.max(220, W * 0.34));
+  const m = { l: 48, r: 14, t: 10, b: 24 };
+  const vals = rows.flatMap((r) => [r.open, r.close, r.implied]).filter(Number.isFinite);
+  const lo = Math.min(...vals) - 8, hi = Math.max(...vals) + 8;
+  const y0 = rows[0].year, y1 = rows[rows.length - 1].year;
+  const band = (W - m.l - m.r) / (y1 - y0 + 1);
+  const x = (yr) => m.l + (yr - y0 + 0.5) * band;
+  const y = (o) => H - m.b - ((o - lo) / (hi - lo)) * (H - m.t - m.b);
+  const bw = Math.max(4, Math.min(14, band - 4));
+  let svg = `<svg viewBox="0 0 ${W} ${H}" role="img" aria-label="Model safe planting dates and satellite-implied sowing date for each season">`;
+  const step = hi - lo > 150 ? 30 : hi - lo > 70 ? 14 : 7;
+  for (let o = Math.ceil(lo / step) * step; o <= hi; o += step) svg += `<line class="grid" x1="${m.l}" x2="${W - m.r}" y1="${y(o)}" y2="${y(o)}"/><text x="${m.l - 6}" y="${y(o) + 4}" text-anchor="end">${esc(lab(((o % 365) + 365) % 365))}</text>`;
+  for (const r of rows) if (band > 34 || r.year % 2 === 0) svg += `<text x="${x(r.year)}" y="${H - 6}" text-anchor="middle">${r.year}</text>`;
+  for (const r of rows) {
+    if (Number.isFinite(r.open)) svg += `<rect x="${x(r.year) - bw / 2}" y="${y(r.close)}" width="${bw}" height="${Math.max(bw, y(r.open) - y(r.close))}" rx="${bw / 2}" fill="var(--window)" opacity="0.55"/>`;
+    if (Number.isFinite(r.implied)) svg += r.inside === false
+      ? `<circle cx="${x(r.year)}" cy="${y(r.implied)}" r="4.500" fill="var(--surface)" stroke="var(--o-short)" stroke-width="2.500"/>`
+      : `<circle cx="${x(r.year)}" cy="${y(r.implied)}" r="5" fill="var(--o-short)" stroke="var(--surface)" stroke-width="2"/>`;
+    svg += `<rect class="yrhit" data-y="${r.year}" x="${x(r.year) - band / 2}" y="${m.t}" width="${band}" height="${H - m.t - m.b}" fill="transparent"/>`;
+  }
+  host.innerHTML = svg + '</svg>';
+  const byYear = new Map(rows.map((r) => [String(r.year), r]));
+  host.querySelectorAll('.yrhit').forEach((el) => {
+    el.addEventListener('pointermove', (e) => {
+      const r = byYear.get(el.dataset.y);
+      showTip(e, `<b>${esc(r.label)}</b><div>Model: safe to plant<em>${Number.isFinite(r.open) ? `${esc(lab(r.open))} – ${esc(lab(r.close))}` : 'no date'}</em></div>${Number.isFinite(r.green) ? `<div>Satellite green-up<em>${esc(lab(Math.round(r.green)))}</em></div><div>Implied sowing<em>${esc(lab(Math.round(r.implied)))}</em></div>` : '<div>No clear green-up seen</div>'}`);
+    });
+    el.addEventListener('pointerleave', hideTip);
+  });
 }
 
 // -------------------------------------------------------------------- table
