@@ -1,0 +1,408 @@
+import { CROPS, MATURITY } from './crops.js';
+import { fetchDaily } from './power.js';
+import { parsePower, addWaterBalance, analyze, riskBand, offsetLabel, OUT, SEASON_DAYS } from './analysis.js';
+
+const $ = (id) => document.getElementById(id);
+const DAY = 86400000;
+
+// Outcome display order = stacking order = validated palette order.
+const OUTCOMES = [
+  { code: OUT.FROST, key: 'frost', label: 'Frost after emergence' },
+  { code: OUT.DRY_START, key: 'dry', label: 'Too dry to establish' },
+  { code: OUT.COLD, key: 'cold', label: 'Too cold to germinate' },
+  { code: OUT.DROUGHT, key: 'drought', label: 'Drought in season' },
+  { code: OUT.HEAT, key: 'heat', label: 'Heat at flowering' },
+  { code: OUT.SHORT, key: 'short', label: 'Season ends before maturity' },
+];
+const byCode = Object.fromEntries(OUTCOMES.map((o) => [o.code, o]));
+const pct = (v) => `${Math.round(v * 100)}%`;
+const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+
+// ------------------------------------------------------------------ controls
+
+for (const [k, c] of Object.entries(CROPS)) $('crop').add(new Option(c.name, k));
+for (const [k, m] of Object.entries(MATURITY)) $('maturity').add(new Option(m.name, k));
+$('maturity').value = 'medium';
+
+const map = L.map('map', { worldCopyJump: true }).setView([20, 10], 2);
+L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
+  maxZoom: 17,
+  attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors',
+}).addTo(map);
+let pin = null;
+
+function setPin(lat, lon, { pan = false } = {}) {
+  lon = ((lon + 540) % 360) - 180;
+  $('lat').value = lat.toFixed(4);
+  $('lon').value = lon.toFixed(4);
+  if (!pin) pin = L.marker([lat, lon]).addTo(map); else pin.setLatLng([lat, lon]);
+  if (pan) map.setView([lat, lon], Math.max(map.getZoom(), 7));
+}
+
+map.on('click', (e) => { setPin(e.latlng.lat, e.latlng.lng); run(); });
+$('controls').addEventListener('submit', (e) => { e.preventDefault(); setPin(+$('lat').value, +$('lon').value, { pan: true }); run(); });
+for (const id of ['crop', 'maturity', 'irrigated']) $(id).addEventListener('change', () => { if (pin) run(); });
+$('locate').addEventListener('click', () => {
+  if (!navigator.geolocation) return showStatus('Location unavailable', 'This browser cannot share a location. Click the map instead.');
+  navigator.geolocation.getCurrentPosition(
+    (p) => { setPin(p.coords.latitude, p.coords.longitude, { pan: true }); run(); },
+    () => showStatus('Location unavailable', 'Could not read your location. Click the map or type coordinates instead.'),
+  );
+});
+
+function showStatus(title, body, isError = false) {
+  const el = $('status');
+  el.hidden = false;
+  el.classList.toggle('error', isError);
+  el.innerHTML = `<h2>${esc(title)}</h2><p>${esc(body)}</p>`;
+}
+
+// ---------------------------------------------------------------------- run
+
+let runId = 0;
+let current = null;
+
+async function run() {
+  const lat = +$('lat').value, lon = +$('lon').value;
+  if (!Number.isFinite(lat) || !Number.isFinite(lon) || Math.abs(lat) > 90) return;
+  const id = ++runId;
+  const cropKey = $('crop').value, maturity = $('maturity').value, irrigated = $('irrigated').checked;
+  location.hash = `${lat.toFixed(4)},${lon.toFixed(4)},${cropKey},${maturity},${irrigated ? 1 : 0}`;
+  $('go').disabled = true;
+  showStatus('Fetching 45 years of daily weather…', `NASA POWER, ${lat.toFixed(2)}°, ${lon.toFixed(2)}°. This usually takes a few seconds.`);
+  try {
+    const json = await fetchDaily(lat, lon);
+    if (id !== runId) return;
+    const series = addWaterBalance(parsePower(json), lat);
+    if (series.n < 365 * 20) throw new Error('NASA POWER returned too little data for this point.');
+    const crop = CROPS[cropKey];
+    const result = analyze(series, crop, lat, { irrigated, gddScale: MATURITY[maturity].scale });
+    current = { result, crop, lat, lon, irrigated, maturity };
+    // Unhide first: the charts measure their containers to size themselves.
+    $('status').hidden = true;
+    $('output').hidden = false;
+    render();
+  } catch (e) {
+    if (id !== runId) return;
+    $('output').hidden = true;
+    showStatus('Could not load weather for this spot', `${e.message || e}. Check your connection and try again.`, true);
+  } finally {
+    if (id === runId) $('go').disabled = false;
+  }
+}
+
+// ------------------------------------------------------------------- render
+
+function render() {
+  renderRec();
+  renderRisk();
+  renderShift();
+  renderHeat();
+  renderTable();
+}
+let resizeTimer;
+window.addEventListener('resize', () => { clearTimeout(resizeTimer); resizeTimer = setTimeout(() => current && render(), 150); });
+matchMedia('(prefers-color-scheme: dark)').addEventListener('change', () => current && renderHeat());
+
+const lab = (o) => offsetLabel(current.result, o);
+const seasonDate = (rec, o) => new Date(rec.seasonStartMs + o * DAY).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric', timeZone: 'UTC' });
+
+function topReasons(reasons, n = 3) {
+  return OUTCOMES.map((o) => ({ ...o, share: reasons[o.code] })).filter((o) => o.share >= 0.01).sort((a, b) => b.share - a.share).slice(0, n);
+}
+
+function shiftSentence() {
+  const { windows, firstYear, lastYear } = current.result;
+  const a = windows.early, b = windows.late;
+  if (!a || !b || a.pMax < 0.4 || b.pMax < 0.4) return '';
+  const part = (d, what) => {
+    if (Math.abs(d) < 2) return `${what} at about the same time`;
+    return `${what} ${Math.abs(d)} days ${d < 0 ? 'earlier' : 'later'}`;
+  };
+  return `Compared with ${firstYear}–${firstYear + 19}, the window of the last 15 years (${lastYear - 14}–${lastYear}) ${part(b.open - a.open, 'opens')} and ${part(b.close - a.close, 'closes')}.`;
+}
+
+function renderRec() {
+  const { result, crop, irrigated } = current;
+  const rec = result.rec;
+  const el = $('rec');
+  const name = crop.name.replace(/ \(.*\)/, '').toLowerCase();
+  if (!rec || !rec.viable) {
+    const why = rec ? topReasons(rec.reasons, 2) : [];
+    const dry = why.some((w) => w.key === 'dry' || w.key === 'drought');
+    el.innerHTML = `
+      <div class="eyebrow">Recommendation</div>
+      <div class="headline">${esc(crop.name)} is not a safe bet here</div>
+      <p class="lede">${rec ? `Even on the best planting date (around ${lab(rec.best)}), a ${name} crop would have succeeded in only ${pct(rec.pMax)} of recent seasons.` : `No planting date in any year on record would have carried a ${name} crop to maturity at this spot.`}
+      ${why.length ? ` The main obstacle: ${why.map((w) => w.label.toLowerCase()).join(', then ')}.` : ''}
+      ${dry && !irrigated ? ' If this field is irrigated, tick “Irrigated field” to lift the rainfall limits.' : ' Try an earlier-maturing class or a different crop.'}</p>`;
+    return;
+  }
+  const band = riskBand(rec.risk);
+  const harvest = rec.best + rec.cycleDays;
+  const why = topReasons(rec.reasons);
+  const n = rec.now;
+  let timing;
+  if (rec.inWindowNow) {
+    const ready = n.warmEnough && n.moistEnough;
+    timing = `<b>The window is open now.</b> ${ready ? 'Conditions on the ground look ready' : 'But hold off'}: the last 7 days averaged ${n.tmean7.toFixed(1)} °C (needs ${crop.germ} °C)${irrigated ? '' : ` and modelled soil moisture is ${pct(n.soilWater)} of capacity (needs 20%)`}.`;
+  } else {
+    timing = `The window opens in <b>${rec.daysToOpen} days</b>. Latest weather on record (${new Date(n.dateMs).toLocaleDateString('en-US', { month: 'short', day: 'numeric', timeZone: 'UTC' })}): 7-day mean ${n.tmean7.toFixed(1)} °C, ${n.rain14.toFixed(0)} mm of rain in 14 days.`;
+  }
+  el.innerHTML = `
+    <div class="eyebrow">Recommendation · ${esc(rec.seasonLabel)} season · ${current.lat.toFixed(2)}°, ${current.lon.toFixed(2)}°</div>
+    <div class="headline">Plant ${esc(name)} ${esc(seasonDate(rec, rec.open).replace(/, \d+$/, ''))} – ${esc(seasonDate(rec, rec.close))}</div>
+    <p class="lede">Best odds around <b>${esc(lab(rec.best))}</b>. ${esc(shiftSentence())}</p>
+    <div class="riskrow">
+      <div class="riskscore">${rec.risk}<small> / 100 risk</small></div>
+      <div>
+        <div class="band"><i class="${band.key}"></i>${band.label}</div>
+        <div class="meter" role="img" aria-label="Risk score ${rec.risk} out of 100"><span class="${band.key}" style="width:${Math.max(3, rec.risk)}%"></span></div>
+      </div>
+    </div>
+    <div class="tiles">
+      <div class="tile"><div class="k">Chance of a successful crop</div><div class="v">${pct(rec.pMean)}</div><div class="d">planted inside the window</div></div>
+      <div class="tile"><div class="k">Expected maturity</div><div class="v">${esc(lab(harvest % 365))}</div><div class="d">about ${Math.round(rec.cycleDays)} days after ${esc(lab(rec.best))}</div></div>
+      <div class="tile"><div class="k">Dry spell of 10+ days</div><div class="v">${pct(rec.drySpellProb)}</div><div class="d">in the 30 days after planting</div></div>
+      <div class="tile"><div class="k">Frost (0 °C or below)</div><div class="v">${pct(rec.frostAfterProb)}</div><div class="d">in the 60 days after planting</div></div>
+    </div>
+    ${why.length ? `<div class="why">When it fails inside the window: ${why.map((w) => `<span><i class="sw" style="background:var(--o-${w.key})"></i>${esc(w.label)} ${pct(w.share)}</span>`).join('')}</div>` : ''}
+    <div class="now">${timing}</div>`;
+}
+
+// ---------------------------------------------------------------- tooltip
+
+const tip = $('tip');
+function showTip(evt, html) {
+  tip.innerHTML = html;
+  tip.hidden = false;
+  const r = tip.getBoundingClientRect();
+  let x = evt.clientX + 14, y = evt.clientY + 14;
+  if (x + r.width > innerWidth - 8) x = evt.clientX - r.width - 14;
+  if (y + r.height > innerHeight - 8) y = evt.clientY - r.height - 14;
+  tip.style.left = `${Math.max(8, x)}px`;
+  tip.style.top = `${Math.max(8, y)}px`;
+}
+const hideTip = () => { tip.hidden = true; };
+
+function monthTicks(result, width = 1000) {
+  const ticks = [];
+  for (let m = 0; m < 12; m += width < 520 ? 2 : 1) {
+    const d = new Date(result.refStartMs);
+    const ms = Date.UTC(d.getUTCFullYear(), d.getUTCMonth() + m, 1);
+    ticks.push({ o: Math.round((ms - result.refStartMs) / DAY), label: new Date(ms).toLocaleDateString('en-US', { month: 'short', timeZone: 'UTC' }) });
+  }
+  return ticks;
+}
+
+// ----------------------------------------------------- chart: risk by date
+
+function renderRisk() {
+  const { result } = current;
+  const curves = result.curves.recent;
+  const rec = result.rec;
+  const host = $('riskChart');
+  const W = Math.max(320, host.clientWidth), H = Math.min(320, Math.max(220, W * 0.36));
+  const m = { l: 38, r: 10, t: 22, b: 24 };
+  const x = (o) => m.l + (o / (SEASON_DAYS - 1)) * (W - m.l - m.r);
+  const y = (v) => m.t + (1 - v) * (H - m.t - m.b);
+
+  $('riskSub').textContent = 'Share of recent seasons in which a crop sown on each date would have failed, and why. The valley is your window.';
+  $('riskLegend').innerHTML = OUTCOMES.map((o) => `<span><i class="sw" style="background:var(--o-${o.key})"></i>${o.label}</span>`).join('');
+
+  let svg = `<svg viewBox="0 0 ${W} ${H}" role="img" aria-label="Stacked area chart of failure risk by planting date">`;
+  for (const v of [0, 0.25, 0.5, 0.75, 1]) svg += `<line class="grid" x1="${m.l}" x2="${W - m.r}" y1="${y(v)}" y2="${y(v)}"/><text x="${m.l - 6}" y="${y(v) + 4}" text-anchor="end">${v * 100}%</text>`;
+  for (const t of monthTicks(result, W)) svg += `<text x="${x(t.o) + 3}" y="${H - 6}">${t.label}</text><line class="grid" x1="${x(t.o)}" x2="${x(t.o)}" y1="${H - m.b}" y2="${H - m.b + 4}"/>`;
+
+  const base = new Float64Array(SEASON_DAYS);
+  for (const o of OUTCOMES) {
+    const c = curves[o.code];
+    let up = '', down = '';
+    for (let d = 0; d < SEASON_DAYS; d++) {
+      up += `${d ? 'L' : 'M'}${x(d).toFixed(1)},${y(base[d] + c[d]).toFixed(1)}`;
+      down = `L${x(d).toFixed(1)},${y(base[d]).toFixed(1)}` + down;
+      base[d] += c[d];
+    }
+    svg += `<path d="${up}${down}Z" fill="var(--o-${o.key})" stroke="var(--surface)" stroke-width="1" stroke-linejoin="round"/>`;
+  }
+  if (rec && rec.viable) {
+    const x0 = x(rec.open), x1 = x(rec.close);
+    svg += `<rect x="${x0}" y="${m.t}" width="${Math.max(2, x1 - x0)}" height="${H - m.t - m.b}" fill="var(--text)" opacity="0.06"/>
+      <line x1="${x0}" x2="${x0}" y1="${m.t}" y2="${H - m.b}" stroke="var(--text)" stroke-width="1"/><line x1="${x1}" x2="${x1}" y1="${m.t}" y2="${H - m.b}" stroke="var(--text)" stroke-width="1"/>
+      <text class="lab" x="${Math.min(Math.max((x0 + x1) / 2, m.l + 70), W - m.r - 70)}" y="${m.t - 7}" text-anchor="middle">Window ${esc(lab(rec.open))} – ${esc(lab(rec.close))}</text>`;
+  }
+  svg += `<line id="riskCross" x1="0" x2="0" y1="${m.t}" y2="${H - m.b}" stroke="var(--text-2)" stroke-width="1" visibility="hidden"/>
+    <rect id="riskHit" x="${m.l}" y="${m.t}" width="${W - m.l - m.r}" height="${H - m.t - m.b}" fill="transparent"/></svg>`;
+  host.innerHTML = svg;
+
+  const hit = host.querySelector('#riskHit'), cross = host.querySelector('#riskCross');
+  hit.addEventListener('pointermove', (e) => {
+    const box = hit.getBoundingClientRect();
+    const d = Math.max(0, Math.min(SEASON_DAYS - 1, Math.round(((e.clientX - box.left) / box.width) * (SEASON_DAYS - 1))));
+    cross.setAttribute('x1', x(d)); cross.setAttribute('x2', x(d)); cross.setAttribute('visibility', 'visible');
+    const rows = OUTCOMES.filter((o) => curves[o.code][d] >= 0.005).map((o) => `<div><i class="sw" style="background:var(--o-${o.key})"></i>${o.label}<em>${pct(curves[o.code][d])}</em></div>`).join('');
+    showTip(e, `<b>Plant ${esc(lab(d))}</b><div>Succeeds<em>${pct(curves[OUT.OK][d])}</em></div>${rows}`);
+  });
+  hit.addEventListener('pointerleave', () => { cross.setAttribute('visibility', 'hidden'); hideTip(); });
+}
+
+// --------------------------------------------------- chart: window by year
+
+function fmtSlope(t, unit = 'days') {
+  if (!Number.isFinite(t.slope)) return { v: '—', d: 'not enough years' };
+  const per = t.slope * 10;
+  const mag = Math.abs(per) >= 10 ? Math.round(Math.abs(per)) : Math.abs(per).toFixed(1);
+  let v;
+  if (unit === 'days') v = Math.abs(per) < 0.05 ? 'No change' : `${mag} days ${per < 0 ? 'earlier' : 'later'}`;
+  else v = `${per > 0 ? '+' : '−'}${mag} ${unit}`;
+  return { v, d: `per decade · ${t.significant ? 'significant' : 'not significant'} (p ${t.p < 0.01 ? '< 0.01' : `= ${t.p.toFixed(2)}`})` };
+}
+
+function renderShift() {
+  const { result } = current;
+  const seasons = result.seasons, tr = result.trends;
+  const host = $('shiftChart');
+  const withWin = seasons.filter((s) => Number.isFinite(s.open));
+  const hasFrost = seasons.filter((s) => Number.isFinite(s.lastFrost)).length >= 8;
+
+  const tiles = [
+    ['Window opens', fmtSlope(tr.open)], ['Window closes', fmtSlope(tr.close)],
+    ...(hasFrost ? [['Last spring frost', fmtSlope(tr.lastFrost)], ['First autumn frost', fmtSlope(tr.firstFrost)]] : []),
+    ['Season heat (GDD)', fmtSlope(tr.gdd, '°C·days')], ['Yearly rainfall', fmtSlope(tr.rain, 'mm')],
+  ];
+  $('trendTiles').innerHTML = tiles.map(([k, t]) => `<div class="tile"><div class="k">${k}</div><div class="v">${t.v}</div><div class="d">${t.d}</div></div>`).join('');
+
+  if (withWin.length < 3) {
+    $('shiftSub').textContent = 'Too few seasons had any safe planting date to draw a window for each year.';
+    $('shiftLegend').innerHTML = ''; host.innerHTML = '';
+    return;
+  }
+  const failed = seasons.filter((s) => s.complete && !Number.isFinite(s.open)).length;
+  $('shiftSub').textContent = `Each bar spans the planting dates that would have worked in that one year; the recommended window is narrower because it has to work in most years.${failed ? ` ${failed} season${failed > 1 ? 's' : ''} had no safe date at all and show${failed > 1 ? '' : 's'} no bar.` : ''}`;
+  $('shiftLegend').innerHTML = `<span><i class="sw" style="background:var(--window)"></i>Safe planting dates that year</span><span><i class="sw line" style="background:var(--text)"></i>Trend (Theil–Sen)</span>${hasFrost ? '<span><i class="sw dot" style="background:var(--o-frost)"></i>Last spring frost</span>' : ''}`;
+
+  const W = Math.max(320, host.clientWidth), H = Math.min(340, Math.max(240, W * 0.4));
+  const m = { l: 48, r: 96, t: 10, b: 24 };
+  const vals = withWin.flatMap((s) => [s.open, s.close]).concat(hasFrost ? seasons.map((s) => s.lastFrost).filter(Number.isFinite) : []);
+  const lo = Math.max(0, Math.min(...vals) - 8), hi = Math.min(364, Math.max(...vals) + 8);
+  const y0 = seasons[0].year, y1 = seasons[seasons.length - 1].year;
+  const band = (W - m.l - m.r) / (y1 - y0 + 1);
+  const x = (yr) => m.l + (yr - y0 + 0.5) * band;
+  const y = (o) => H - m.b - ((o - lo) / (hi - lo)) * (H - m.t - m.b);
+  const bw = Math.max(3, Math.min(10, band - 2));
+
+  let svg = `<svg viewBox="0 0 ${W} ${H}" role="img" aria-label="Safe planting window for each year with trend lines">`;
+  const step = hi - lo > 150 ? 30 : hi - lo > 70 ? 14 : 7;
+  for (let o = Math.ceil(lo / step) * step; o <= hi; o += step) svg += `<line class="grid" x1="${m.l}" x2="${W - m.r}" y1="${y(o)}" y2="${y(o)}"/><text x="${m.l - 6}" y="${y(o) + 4}" text-anchor="end">${esc(lab(o))}</text>`;
+  for (let yr = Math.ceil(y0 / 5) * 5; yr <= y1; yr += W < 520 ? 10 : 5) svg += `<text x="${x(yr)}" y="${H - 6}" text-anchor="middle">${yr}</text>`;
+  for (const s of withWin) {
+    const top = y(s.close), h = Math.max(bw, y(s.open) - top);
+    svg += `<rect x="${x(s.year) - bw / 2}" y="${top}" width="${bw}" height="${h}" rx="${bw / 2}" fill="var(--window)"/>`;
+  }
+  if (hasFrost) for (const s of seasons) if (Number.isFinite(s.lastFrost)) svg += `<circle cx="${x(s.year)}" cy="${y(s.lastFrost)}" r="4" fill="var(--o-frost)" stroke="var(--surface)" stroke-width="2"/>`;
+  const labels = [];
+  for (const [key, text] of [['open', 'opens'], ['close', 'closes']]) {
+    const t = tr[key];
+    if (!Number.isFinite(t.slope)) continue;
+    const f = (yr) => Math.max(lo, Math.min(hi, t.intercept + t.slope * yr));
+    svg += `<line x1="${x(y0)}" x2="${x(y1)}" y1="${y(f(y0))}" y2="${y(f(y1))}" stroke="var(--text)" stroke-width="2" stroke-linecap="round"/>`;
+    labels.push({ y: y(f(y1)), text: `${text} ${esc(lab(Math.round(f(y1))))}` });
+  }
+  if (labels.length === 2 && Math.abs(labels[0].y - labels[1].y) < 14) { labels[0].y += 7; labels[1].y -= 7; }
+  for (const l of labels) svg += `<text class="lab" x="${x(y1) + bw / 2 + 6}" y="${l.y + 4}">${l.text}</text>`;
+  for (const s of seasons) svg += `<rect class="yrhit" data-y="${s.year}" x="${x(s.year) - band / 2}" y="${m.t}" width="${band}" height="${H - m.t - m.b}" fill="transparent"/>`;
+  host.innerHTML = svg + '</svg>';
+
+  const bySeason = new Map(seasons.map((s) => [String(s.year), s]));
+  host.querySelectorAll('.yrhit').forEach((r) => {
+    r.addEventListener('pointermove', (e) => {
+      const s = bySeason.get(r.dataset.y);
+      const win = Number.isFinite(s.open) ? `<div>Safe to plant<em>${esc(lab(s.open))} – ${esc(lab(s.close))}</em></div>` : `<div>${s.complete ? 'No safe planting date' : 'Season still in progress'}</div>`;
+      showTip(e, `<b>${esc(s.label)}</b>${win}${Number.isFinite(s.lastFrost) ? `<div>Last spring frost<em>${esc(lab(s.lastFrost))}</em></div>` : ''}`);
+    });
+    r.addEventListener('pointerleave', hideTip);
+  });
+}
+
+// ------------------------------------------------------------ chart: heatmap
+
+function renderHeat() {
+  const { result } = current;
+  const { seasons, outcomes } = result;
+  const host = $('heatChart'), canvas = $('heat');
+  $('heatLegend').innerHTML = `<span><i class="sw" style="background:var(--o-ok);outline:1px solid var(--line)"></i>Crop succeeds</span>` + OUTCOMES.map((o) => `<span><i class="sw" style="background:var(--o-${o.key})"></i>${o.label}</span>`).join('');
+  const css = getComputedStyle(document.documentElement);
+  const col = (n) => css.getPropertyValue(n).trim();
+  const colors = { [OUT.OK]: col('--o-ok'), [OUT.UNKNOWN]: col('--o-unknown') };
+  for (const o of OUTCOMES) colors[o.code] = col(`--o-${o.key}`);
+
+  const W = Math.max(320, host.clientWidth), ml = 52, mb = 20;
+  const rowH = Math.max(5, Math.min(9, Math.floor(360 / seasons.length)));
+  const H = seasons.length * rowH + mb;
+  const dpr = window.devicePixelRatio || 1;
+  canvas.width = W * dpr; canvas.height = H * dpr; canvas.style.height = `${H}px`;
+  const g = canvas.getContext('2d');
+  g.scale(dpr, dpr);
+  g.clearRect(0, 0, W, H);
+  const cw = (W - ml) / SEASON_DAYS;
+  seasons.forEach((s, k) => {
+    // Draw runs of equal outcome as one rectangle so there are no seams.
+    let start = 0;
+    for (let o = 1; o <= SEASON_DAYS; o++) {
+      const prev = outcomes[k * SEASON_DAYS + o - 1];
+      if (o === SEASON_DAYS || outcomes[k * SEASON_DAYS + o] !== prev) {
+        g.fillStyle = colors[prev];
+        g.fillRect(ml + start * cw, k * rowH, (o - start) * cw + 0.5, rowH - 1);
+        start = o;
+      }
+    }
+  });
+  g.fillStyle = col('--text-3');
+  g.font = '11.5px system-ui, sans-serif';
+  g.textBaseline = 'middle';
+  seasons.forEach((s, k) => { if (s.year % 5 === 0) g.fillText(s.label, 0, k * rowH + rowH / 2); });
+  g.textBaseline = 'alphabetic';
+  for (const t of monthTicks(result, W)) g.fillText(t.label, ml + t.o * cw + 2, H - 5);
+
+  canvas.onpointermove = (e) => {
+    const box = canvas.getBoundingClientRect();
+    const k = Math.floor((e.clientY - box.top) / rowH), o = Math.floor((e.clientX - box.left - ml) / cw);
+    if (k < 0 || k >= seasons.length || o < 0 || o >= SEASON_DAYS) return hideTip();
+    const c = outcomes[k * SEASON_DAYS + o];
+    const what = c === OUT.OK ? 'Crop succeeds' : c === OUT.UNKNOWN ? 'Not known yet' : byCode[c].label;
+    showTip(e, `<b>${esc(seasons[k].label)} · planted ${esc(lab(o))}</b><div>${c > 0 ? `<i class="sw" style="background:var(--o-${byCode[c].key})"></i>` : ''}${what}</div>`);
+  };
+  canvas.onpointerleave = hideTip;
+}
+
+// -------------------------------------------------------------------- table
+
+function tableRows() {
+  const f = (o) => (Number.isFinite(o) ? lab(o) : '');
+  return current.result.seasons.map((s) => [s.label, f(s.open), f(s.close), Number.isFinite(s.length) ? s.length : '', f(s.lastFrost), f(s.firstFrost), Number.isFinite(s.gdd) ? Math.round(s.gdd) : '', Number.isFinite(s.rain) ? Math.round(s.rain) : '']);
+}
+const HEAD = ['Season', 'Window opens', 'Window closes', 'Safe days', 'Last spring frost', 'First autumn frost', 'GDD (°C·days)', 'Rain (mm)'];
+
+function renderTable() {
+  $('yearTable').innerHTML = `<thead><tr>${HEAD.map((h) => `<th>${h}</th>`).join('')}</tr></thead><tbody>${tableRows().map((r) => `<tr>${r.map((c) => `<td>${esc(c)}</td>`).join('')}</tr>`).join('')}</tbody>`;
+}
+$('csv').addEventListener('click', () => {
+  if (!current) return;
+  const csv = [HEAD, ...tableRows()].map((r) => r.map((c) => `"${c}"`).join(',')).join('\n');
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(new Blob([csv], { type: 'text/csv' }));
+  a.download = `seedline_${$('crop').value}_${current.lat.toFixed(2)}_${current.lon.toFixed(2)}.csv`;
+  a.click();
+  URL.revokeObjectURL(a.href);
+});
+
+// ------------------------------------------------------- restore from link
+
+const h = location.hash.slice(1).split(',');
+if (h.length >= 3 && Number.isFinite(+h[0]) && Number.isFinite(+h[1]) && CROPS[h[2]]) {
+  $('crop').value = h[2];
+  if (MATURITY[h[3]]) $('maturity').value = h[3];
+  $('irrigated').checked = h[4] === '1';
+  setPin(+h[0], +h[1], { pan: true });
+  run();
+}

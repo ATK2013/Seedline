@@ -1,0 +1,88 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Seedline — when to plant, from 40+ years of weather</title>
+  <meta name="description" content="Drop a pin, pick a crop. Seedline replays four decades of NASA daily weather to show how your safe planting window has moved and when to plant this season.">
+  <link rel="stylesheet" href="vendor/leaflet/leaflet.css">
+  <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+  <header class="top">
+    <div class="brand">
+      <svg viewBox="0 0 24 24" width="26" height="26" aria-hidden="true"><path d="M12 22V11" stroke="currentColor" stroke-width="2" stroke-linecap="round" fill="none"/><path d="M12 12C12 7 8.5 4.5 4 4.5c0 5 3 7.5 8 7.5ZM12 15c0-4 2.8-6 7-6 0 4-2.6 6-7 6Z" fill="currentColor"/></svg>
+      <h1>Seedline</h1>
+    </div>
+    <p class="tagline">When to plant, worked out from four decades of daily weather at your exact spot.</p>
+  </header>
+
+  <main class="layout">
+    <section class="panel" aria-label="Field and crop">
+      <div id="map" role="application" aria-label="Map. Click to drop a pin on your field."></div>
+      <form id="controls" class="controls">
+        <div class="row two">
+          <label>Latitude <input id="lat" type="number" step="0.0001" min="-90" max="90" inputmode="decimal" required></label>
+          <label>Longitude <input id="lon" type="number" step="0.0001" min="-180" max="180" inputmode="decimal" required></label>
+        </div>
+        <button type="button" id="locate" class="ghost">Use my location</button>
+        <div class="row two">
+          <label>Crop <select id="crop"></select></label>
+          <label>Maturity <select id="maturity"></select></label>
+        </div>
+        <label class="check"><input id="irrigated" type="checkbox"> Irrigated field <span class="hint">(ignore rainfall limits)</span></label>
+        <button type="submit" id="go" class="primary">Find my planting window</button>
+      </form>
+      <p class="fine">Click the map to drop a pin. Weather: NASA POWER daily data, 1981 to this week, on a roughly 50 km grid.</p>
+    </section>
+
+    <section class="results" aria-live="polite">
+      <div id="status" class="status">
+        <h2>Drop a pin to begin</h2>
+        <p>Pick your field on the map and choose a crop. Seedline replays every planting date in every year since 1981 against the weather that actually followed, then tells you when planting has been safe, how that has shifted, and what to do this season.</p>
+      </div>
+      <div id="output" hidden>
+        <article class="card rec" id="rec"></article>
+        <article class="card">
+          <h2>What goes wrong, by planting date</h2>
+          <p class="sub" id="riskSub"></p>
+          <div class="legend" id="riskLegend"></div>
+          <div class="chart" id="riskChart"></div>
+        </article>
+        <article class="card">
+          <h2>How the window has moved</h2>
+          <p class="sub" id="shiftSub"></p>
+          <div class="legend" id="shiftLegend"></div>
+          <div class="chart" id="shiftChart"></div>
+          <div class="tiles" id="trendTiles"></div>
+        </article>
+        <article class="card">
+          <h2>Every year, every planting date</h2>
+          <p class="sub">Each row is one season; each column a planting date. Colour shows how a crop sown that day would have fared in the weather that followed.</p>
+          <div class="legend" id="heatLegend"></div>
+          <div class="chart heat" id="heatChart"><canvas id="heat"></canvas></div>
+          <details>
+            <summary>Year-by-year table</summary>
+            <div class="tablewrap"><table id="yearTable"></table></div>
+            <button type="button" id="csv" class="ghost">Download CSV</button>
+          </details>
+        </article>
+        <article class="card method">
+          <h2>How this is worked out</h2>
+          <ul>
+            <li><b>Replay, not averages.</b> For each year and each possible planting day, the crop is grown through the real weather: it must germinate (7-day mean temperature above the crop's minimum), find moisture (soil-water balance from rain and Hargreaves evapotranspiration), escape frost after emergence, avoid heat at flowering, and collect enough growing-degree days to mature in time.</li>
+            <li><b>Window.</b> The recommended window is the run of planting dates with at least an 80% chance of success, weighting recent years most (15-year e-folding) so it reflects today's climate.</li>
+            <li><b>Risk score.</b> 100 minus the average chance of success across the window.</li>
+            <li><b>Trends.</b> Theil–Sen slopes with a Mann–Kendall test; a trend is called significant at p &lt; 0.05.</li>
+            <li><b>Limits.</b> Weather is a ~50 km grid average, so frost pockets, slopes and local soils are not seen; crop numbers are generic defaults, not your variety. Use this alongside local knowledge, not instead of it.</li>
+          </ul>
+        </article>
+      </div>
+    </section>
+  </main>
+  <div id="tip" class="tip" hidden></div>
+
+  <script src="vendor/leaflet/leaflet.js"></script>
+  <script type="module" src="js/app.js"></script>
+</body>
+</html>

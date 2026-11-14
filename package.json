@@ -1,0 +1,11 @@
+{
+  "name": "seedline",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Planting-window advisor built on 40+ years of NASA POWER daily weather",
+  "scripts": {
+    "start": "python3 -m http.server 8000",
+    "test": "node --test test/*.test.js"
+  }
+}
