@@ -1,6 +1,8 @@
-import { CROPS, MATURITY } from './crops.js';
-import { fetchDaily } from './power.js';
-import { parsePower, addWaterBalance, analyze, riskBand, offsetLabel, OUT, SEASON_DAYS } from './analysis.js';
+// Bump ?v= here and in index.html whenever these files change, so browsers
+// never pair a new page with stale cached scripts or styles.
+import { CROPS, MATURITY } from './crops.js?v=2';
+import { fetchDaily } from './power.js?v=2';
+import { parsePower, addWaterBalance, analyze, riskBand, offsetLabel, OUT, SEASON_DAYS } from './analysis.js?v=2';
 
 const $ = (id) => document.getElementById(id);
 const DAY = 86400000;
