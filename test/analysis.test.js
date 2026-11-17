@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { parsePower, addWaterBalance, simulatePlanting, analyze, trend, windowFromCurve, extraterrestrialRadiation, OUT } from '../js/analysis.js';
 import { CROPS } from '../js/crops.js';
+import { looksLikeWater, SOILS } from '../js/analysis.js';
 
 const DAY = 86400000;
 
@@ -141,4 +142,74 @@ test('compareNdvi agrees when green-up follows sowing in the window, and flags a
   assert.equal(early.summary.verdict, 'earlier');
   const flat = compareNdvi(r, CROPS.maize, targets.map((t) => ({ year: t.year, points: t.dates.map((c) => ({ ms: c.ms, ndvi: 0.25 })) })));
   assert.equal(flat.summary.verdict, 'no-crop');
+});
+
+// ------------------------------------------------- winter crops, rice, soil
+test('winter wheat is sown in autumn and fails if sown in spring or too late', () => {
+  const s = addWaterBalance(synthetic({ mean: 11, amp: 13 }), 40);
+  const doy = (n) => 366 + n;
+  assert.equal(simulatePlanting(s, doy(275), CROPS.winterwheat).code, OUT.OK);       // early October
+  assert.equal(simulatePlanting(s, doy(120), CROPS.winterwheat).code, OUT.WINTER);   // spring: never vernalises
+  assert.notEqual(simulatePlanting(s, doy(330), CROPS.winterwheat).code, OUT.OK);    // late November: too late
+  const r = analyze(synthetic({ mean: 11, amp: 13 }), CROPS.winterwheat, 40);
+  assert.ok(r.rec.viable);
+  assert.ok(r.rec.open > 240 && r.rec.close < 320, `window ${r.rec.open}-${r.rec.close}`);
+});
+
+test('rice needs a warm, wet season and is spoiled by cold at flowering', () => {
+  const warm = addWaterBalance(synthetic({ mean: 26, amp: 3, rain: 8 }), 15);
+  assert.equal(simulatePlanting(warm, 366 + 150, CROPS.rice).code, OUT.OK);
+  const dry = addWaterBalance(synthetic({ mean: 26, amp: 3, rain: 1.5 }), 15);
+  assert.notEqual(simulatePlanting(dry, 366 + 150, CROPS.rice).code, OUT.OK);
+  assert.equal(simulatePlanting(dry, 366 + 150, CROPS.rice, { irrigated: true }).code, OUT.OK);
+  const snap = addWaterBalance(synthetic({ mean: 26, amp: 3, rain: 8 }), 15);
+  for (let j = 366 + 150 + 40; j < 366 + 150 + 80; j++) snap.tmin[j] = 13;   // cold nights around flowering
+  assert.equal(simulatePlanting(snap, 366 + 150, CROPS.rice).code, OUT.HEAT);
+});
+
+test('a light soil dries out sooner than a heavy one', () => {
+  const mk = () => synthetic({ rain: 1.2 });
+  const light = addWaterBalance(mk(), 45, SOILS.light), heavy = addWaterBalance(mk(), 45, SOILS.heavy);
+  const meanSw = (s) => s.sw.reduce((a, b) => a + b, 0) / s.n * s.swCapacity;
+  assert.ok(meanSw(light) < meanSw(heavy));
+});
+
+test('looksLikeWater flags a sea-level point with almost no day-night swing', () => {
+  const land = synthetic();
+  assert.equal(looksLikeWater(land, 0), false);
+  const sea = synthetic();
+  for (let i = 0; i < sea.n; i++) { const m = (sea.tmin[i] + sea.tmax[i]) / 2; sea.tmin[i] = m - 1; sea.tmax[i] = m + 1; }
+  assert.equal(looksLikeWater(sea, 0), true);
+  assert.equal(looksLikeWater(sea, 300), false);
+});
+
+// ------------------------------------------------------- forecast, fast satellite path
+import { outlook } from '../js/forecast.js';
+import { assignGreenups } from '../js/ndvi.js';
+
+test('outlook says go, wait or far from the forecast', () => {
+  const r = analyze(synthetic(), CROPS.maize, 45);
+  const rec = { ...r.rec, now: { soilWater: 0.5 } };
+  const mk = (startOffset, tmin, tmax, rain = 3) => Array.from({ length: 16 }, (_, i) => ({ ms: rec.seasonStartMs + (startOffset + i) * DAY, tmin, tmax, rain }));
+  assert.equal(outlook(mk(rec.best, 12, 24), CROPS.maize, rec).status, 'go');
+  const cold = outlook(mk(rec.best, 2, 9), CROPS.maize, rec);
+  assert.equal(cold.status, 'wait');
+  assert.deepEqual(cold.reasons, ['cold']);
+  const frosty = mk(rec.best, 12, 24); frosty[11].tmin = -3;
+  assert.deepEqual(outlook(frosty, CROPS.maize, rec).reasons, ['frost']);
+  assert.deepEqual(outlook(mk(rec.best, 12, 24, 0), CROPS.maize, { ...rec, now: { soilWater: 0.05 } }).reasons, ['dry']);
+  assert.deepEqual(outlook(mk(rec.best, 12, 24, 0), CROPS.maize, { ...rec, now: { soilWater: 0.05 } }, { irrigated: true }).reasons, []);
+  assert.equal(outlook(mk(rec.open - 10, 12, 24), CROPS.maize, rec).status, 'soon');
+  assert.equal(outlook(mk(rec.open - 60, 12, 24), CROPS.maize, rec).status, 'far');
+});
+
+test('assignGreenups gives each season the cycle inside its search window', () => {
+  const r = analyze(synthetic(), CROPS.maize, 45);
+  const lag = CROPS.maize.emerge + 30;
+  const greens = r.seasons.filter((s) => s.complete).slice(-12).map((s) => s.startMs + (r.rec.best + lag) * DAY);
+  greens.push(greens[3] + 150 * DAY);   // a second cycle later that year must be ignored
+  const obs = assignGreenups(r, greens, 10);
+  assert.equal(obs.length, 10);
+  assert.ok(obs.every((o) => Number.isFinite(o.greenMs)));
+  assert.equal(compareNdvi(r, CROPS.maize, obs).summary.verdict, 'agrees');
 });

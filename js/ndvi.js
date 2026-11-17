@@ -103,6 +103,24 @@ export function ndviTargets(result, count = 15) {
 }
 
 /**
+ * Fast path: NASA's yearly phenology product (MCD12Q2) already gives the
+ * mid-green-up date of each growing cycle. Hand each recent season the first
+ * cycle that starts in the same search window the NDVI method uses.
+ */
+export function assignGreenups(result, greenMsList, count = 15) {
+  const dates = greenMsList.filter(Number.isFinite).sort((a, b) => a - b);
+  if (!dates.length) return [];
+  const last = dates[dates.length - 1];
+  return ndviTargets(result, 60)
+    .filter((t) => t.dates[0].ms <= last)       // the product lags a year or two
+    .slice(0, count)
+    .map((t) => {
+      const from = t.dates[0].ms, to = from + 160 * DAY;
+      return { year: t.year, greenMs: dates.find((d) => d >= from && d <= to) ?? NaN };
+    });
+}
+
+/**
  * Compare satellite green-up with the model. `observed` is a list of
  * { year, points } where points is the NDVI series for that season.
  */
@@ -111,7 +129,8 @@ export function compareNdvi(result, crop, observed) {
   const byYear = new Map(result.seasons.map((s) => [s.year, s]));
   const years = observed.map((o) => {
     const s = byYear.get(o.year);
-    const g = greenUp(o.points);
+    // Either a raw NDVI series to date, or a green-up date already dated by NASA (MCD12Q2).
+    const g = o.points ? greenUp(o.points) : (Number.isFinite(o.greenMs) ? { ms: o.greenMs, max: NaN } : null);
     const row = { year: o.year, label: s.label, open: s.open, close: s.close, green: NaN, implied: NaN, inside: null, peak: NaN };
     if (g) {
       row.green = (g.ms - s.startMs) / DAY;

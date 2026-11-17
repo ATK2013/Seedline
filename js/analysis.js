@@ -10,10 +10,11 @@ const DAY = 86400000;
 export const SEASON_DAYS = 365;
 
 // Outcome codes for one (year, planting day) replay.
-export const OUT = { UNKNOWN: -1, OK: 0, COLD: 1, FROST: 2, DRY_START: 3, HEAT: 4, DROUGHT: 5, SHORT: 6 };
-export const N_OUT = 7;
+export const OUT = { UNKNOWN: -1, OK: 0, COLD: 1, FROST: 2, DRY_START: 3, HEAT: 4, DROUGHT: 5, SHORT: 6, WINTER: 7 };
+export const N_OUT = 8;
 
-const SOIL_CAPACITY = 100;   // mm of plant-available water in the root zone
+// mm of plant-available water in the root zone, by soil texture
+export const SOILS = { light: 60, medium: 100, heavy: 150 };
 const DRY_START_SW = 0.20;   // mean relative soil water needed in the first 3 weeks
 const DROUGHT_SW = 0.12;     // below this the crop is under severe water stress
 const DROUGHT_FRAC = 0.40;   // share of the cycle under severe stress that fails it
@@ -60,7 +61,9 @@ const doyOf = (ms) => { const d = new Date(ms); return Math.floor((ms - Date.UTC
  * water balance. Measured solar radiation is used where POWER has it; before
  * 1984 and in the most recent days it falls back to the temperature-range form.
  */
-export function addWaterBalance(s, lat) {
+export function addWaterBalance(s, lat, capacity = SOILS.medium) {
+  const SOIL_CAPACITY = capacity;
+  s.swCapacity = capacity;
   s.et0 = new Float32Array(s.n);
   s.sw = new Float32Array(s.n);
   let w = SOIL_CAPACITY / 2;
@@ -93,6 +96,10 @@ function mean30(s, j) {
 export function simulatePlanting(s, d, crop, opts = {}) {
   const target = crop.gdd * (opts.gddScale ?? 1);
   const rainfed = !opts.irrigated;
+  const winter = crop.winter;             // autumn-sown crops that overwinter
+  const dryStart = crop.dryStart ?? DRY_START_SW;
+  const droughtSw = crop.droughtSw ?? DROUGHT_SW;
+  const droughtFrac = crop.droughtFrac ?? DROUGHT_FRAC;
   if (d + 21 >= s.n) return { code: OUT.UNKNOWN };
 
   let t7 = 0;
@@ -102,31 +109,63 @@ export function simulatePlanting(s, d, crop, opts = {}) {
   if (rainfed) {
     let sw = 0;
     for (let j = d; j < d + 21; j++) sw += s.sw[j];
-    if (sw / 21 < DRY_START_SW) return { code: OUT.DRY_START };
+    if (sw / 21 < dryStart) return { code: OUT.DRY_START };
   }
 
-  let gdd = 0, heatDays = 0, dryDays = 0;
+  let gdd = 0, badFlowerDays = 0, dryDays = 0, chillDays = 0, cold7 = 0, wintered = false;
   for (let j = d; ; j++) {
     const age = j - d;
     if (j >= s.n) return { code: OUT.UNKNOWN };
     if (age > crop.maxDays) return { code: OUT.SHORT };
-    if (age >= crop.emerge && s.tmin[j] <= crop.frostKill) {
-      // A frost while the season is still warming up means "planted too
-      // early"; a frost once it is cooling means the season ran out.
-      const warming = mean30(s, j) >= mean30(s, d);
-      return { code: warming && gdd < 0.5 * target ? OUT.FROST : OUT.SHORT };
+    const tmean = (s.tmin[j] + s.tmax[j]) / 2;
+
+    if (winter) {
+      // Winter sets in at the first run of 7 days averaging under 3 °C. By then
+      // the crop must be established, and not so advanced that it has lost
+      // its hardiness.
+      if (tmean >= 0 && tmean <= 10) chillDays++;
+      cold7 = tmean < 3 ? cold7 + 1 : 0;
+      if (!wintered && cold7 >= 7) {
+        wintered = true;
+        if (gdd < winter.minFallGdd) return { code: OUT.WINTER };
+      }
+    }
+    if (age >= crop.emerge) {
+      const hardy = winter && gdd < 0.5 * target;
+      if (hardy) {
+        if (s.tmin[j] <= winter.kill) return { code: OUT.WINTER };
+      } else if (s.tmin[j] <= crop.frostKill) {
+        // A frost while the season is still warming up means "planted too
+        // early"; a frost once it is cooling means the season ran out.
+        const warming = mean30(s, j) >= mean30(s, d);
+        return { code: warming && gdd < 0.5 * target ? OUT.FROST : OUT.SHORT };
+      }
     }
     const hi = Math.max(crop.base, Math.min(s.tmax[j], crop.cap));
     const lo = Math.max(crop.base, Math.min(s.tmin[j], crop.cap));
     gdd += (hi + lo) / 2 - crop.base;
-    if (gdd >= 0.45 * target && gdd <= 0.65 * target && s.tmax[j] >= crop.heat) heatDays++;
-    if (age >= 21 && s.sw[j] < DROUGHT_SW) dryDays++;
+    if (gdd >= 0.45 * target && gdd <= 0.65 * target) {
+      if (s.tmax[j] >= crop.heat || (crop.coldFlower !== undefined && s.tmin[j] <= crop.coldFlower)) badFlowerDays++;
+    }
+    if (age >= 21 && s.sw[j] < droughtSw) dryDays++;
     if (gdd >= target) {
-      if (heatDays >= HEAT_DAYS) return { code: OUT.HEAT, days: age };
-      if (rainfed && dryDays / Math.max(1, age - 21) > DROUGHT_FRAC) return { code: OUT.DROUGHT, days: age };
+      if (winter && chillDays < winter.chillDays) return { code: OUT.WINTER, days: age };
+      if (badFlowerDays >= HEAT_DAYS) return { code: OUT.HEAT, days: age };
+      if (rainfed && dryDays / Math.max(1, age - 21) > droughtFrac) return { code: OUT.DROUGHT, days: age };
       return { code: OUT.OK, days: age };
     }
   }
+}
+
+/**
+ * POWER has no land mask. Open water betrays itself by a tiny day-night
+ * temperature swing at sea level, so use that to catch a pin dropped in the sea.
+ */
+export function looksLikeWater(s, elevation) {
+  const from = Math.max(0, s.n - 5 * 365);
+  let range = 0;
+  for (let i = from; i < s.n; i++) range += s.tmax[i] - s.tmin[i];
+  return elevation <= 2 && range / (s.n - from) < 4;
 }
 
 // ---------------------------------------------------------------- statistics
@@ -259,7 +298,8 @@ function yearWindow(outcomes, k, centre) {
 }
 
 export function analyze(series, crop, lat, opts = {}) {
-  const s = series.sw ? series : addWaterBalance(series, lat);
+  const capacity = opts.soilCapacity ?? SOILS.medium;
+  const s = series.sw && series.swCapacity === capacity ? series : addWaterBalance(series, lat, capacity);
   const seasons = seasonStarts(s, lat);
   const nS = seasons.length;
   const outcomes = new Int8Array(nS * SEASON_DAYS);
