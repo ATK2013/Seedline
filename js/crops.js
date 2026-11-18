@@ -11,6 +11,12 @@
 // emerge       days from planting to emergence (frost cannot hurt before this)
 // heat         daily maximum that damages flowering (°C)
 // maxDays      longest crop cycle considered practical
+// Optional:
+// coldFlower   daily minimum that sterilises flowers (rice)
+// dryStart / droughtSw / droughtFrac   stricter water needs than the defaults
+// winter       autumn-sown crops: kill = temperature that kills the dormant
+//              crop, minFallGdd = growth needed before winter sets in,
+//              chillDays = days at 0-10 °C needed to flower (vernalisation)
 export const CROPS = {
   maize:     { name: 'Maize (corn)',  base: 10, cap: 30, gdd: 1400, germ: 10, frostKill: -1, emerge: 8,  heat: 36, maxDays: 200 },
   soybean:   { name: 'Soybean',       base: 10, cap: 30, gdd: 1300, germ: 12, frostKill: -1, emerge: 7,  heat: 37, maxDays: 170 },
@@ -20,6 +26,10 @@ export const CROPS = {
   cotton:    { name: 'Cotton',        base: 15.6, cap: 35, gdd: 1300, germ: 16, frostKill: 0, emerge: 8, heat: 40, maxDays: 200 },
   potato:    { name: 'Potato',        base: 7,  cap: 30, gdd: 1200, germ: 7,  frostKill: -2, emerge: 18, heat: 34, maxDays: 160 },
   bean:      { name: 'Dry bean',      base: 10, cap: 30, gdd: 1050, germ: 13, frostKill: 0,  emerge: 7,  heat: 35, maxDays: 140 },
+  winterwheat: { name: 'Winter wheat', base: 0, cap: 30, gdd: 2100, germ: 4, frostKill: -4, emerge: 10, heat: 32, maxDays: 330,
+                 winter: { kill: -25, minFallGdd: 300, chillDays: 40 } },
+  rice:      { name: 'Rice',          base: 10, cap: 35, gdd: 2000, germ: 15, frostKill: 2,  emerge: 8,  heat: 36, maxDays: 180,
+               coldFlower: 15, dryStart: 0.35, droughtSw: 0.3, droughtFrac: 0.25 },
   sunflower: { name: 'Sunflower',     base: 7,  cap: 30, gdd: 1600, germ: 8,  frostKill: -2, emerge: 9,  heat: 38, maxDays: 170 },
 };
 

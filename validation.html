@@ -1,0 +1,33 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Seedline — validation against planting calendars</title>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,650&display=swap">
+  <link rel="stylesheet" href="css/style.css?v=7">
+</head>
+<body>
+  <header class="hero">
+    <div class="heroin">
+      <div class="brand"><span>Seedline</span></div>
+      <h1>Does it match what farmers do?</h1>
+      <p class="tagline">The model's recommended window for 20 crop-and-region pairs, run live in your browser on NASA weather, next to the usual planting period from published crop calendars.</p>
+    </div>
+  </header>
+  <main class="vpage">
+    <article class="card">
+      <p class="back"><a href="index.html">← Back to Seedline</a></p>
+      <h2 id="vhead">Running the model for 20 sites…</h2>
+      <p class="sub">A <b>hit</b> means the model's best day falls inside the published period, or at least half of its window does. <b>Near</b> means the two overlap, or sit within two weeks. Nothing here was tuned to improve the score.</p>
+      <div class="vsum" id="vsum"></div>
+      <div class="warnbox"><b>Check the reference dates before citing this.</b> The published periods below were transcribed from memory of USDA NASS Agricultural Handbook 628 (“Usual Planting and Harvesting Dates”, 2010, most-active period) and FAO GIEWS country crop calendars. They are approximate and have not been re-verified line by line against the sources.</div>
+    </article>
+    <article class="card">
+      <div class="legend"><span><i class="sw" style="background:var(--text-3)"></i>Published usual planting period</span><span><i class="sw" style="background:var(--window)"></i>Model's recommended window</span></div>
+      <div class="tablewrap" style="max-height:none"><table class="vtable" id="vtable"></table></div>
+    </article>
+  </main>
+  <script type="module" src="js/validate.js?v=7"></script>
+</body>
+</html>
