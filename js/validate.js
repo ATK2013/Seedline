@@ -1,9 +1,9 @@
 // Validation page: run the model live for each reference site and compare its
 // recommended window with the published usual planting period.
-import { CROPS } from './crops.js?v=6';
-import { fetchDaily } from './power.js?v=6';
-import { parsePower, analyze } from './analysis.js?v=6';
-import { SITES, scoreSite } from './validation-sites.js?v=6';
+import { CROPS } from './crops.js?v=7';
+import { fetchDaily } from './power.js?v=7';
+import { parsePower, analyze } from './analysis.js?v=7';
+import { SITES, scoreSite } from './validation-sites.js?v=7';
 
 const DAY = 86400000;
 const $ = (id) => document.getElementById(id);

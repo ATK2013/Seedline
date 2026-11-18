@@ -4,6 +4,7 @@
 // download for a field still answers today when there is no connection.
 const CACHE = 'seedline-v1';
 const WEATHER = 'power.larc.nasa.gov';
+const STATIC_HOSTS = ['fonts.googleapis.com', 'fonts.gstatic.com', 'www.gstatic.com'];
 
 function keyFor(request) {
   const url = new URL(request.url);
@@ -17,7 +18,10 @@ self.addEventListener('activate', (e) => e.waitUntil(self.clients.claim()));
 self.addEventListener('fetch', (event) => {
   const { request } = event;
   const url = new URL(request.url);
-  const mine = url.origin === self.location.origin || url.hostname === WEATHER || url.hostname.endsWith('gstatic.com') || url.hostname.endsWith('googleapis.com');
+  // Only the app, its weather and its fonts and libraries. Firebase sign-in and
+  // database traffic must never pass through here: buffering a streaming
+  // database response into the cache would stall it.
+  const mine = url.origin === self.location.origin || url.hostname === WEATHER || STATIC_HOSTS.includes(url.hostname);
   if (request.method !== 'GET' || !mine) return;
   event.respondWith((async () => {
     const cache = await caches.open(CACHE);

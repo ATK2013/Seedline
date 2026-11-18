@@ -1,12 +1,12 @@
 // Bump ?v= here and in index.html whenever these files change, so browsers
 // never pair a new page with stale cached scripts or styles.
-import { CROPS, MATURITY } from './crops.js?v=6';
-import { fetchDaily } from './power.js?v=6';
-import { ndviTargets, compareNdvi, assignGreenups, TOLERANCE } from './ndvi.js?v=6';
-import { fetchNdvi, fetchGreenups } from './modis.js?v=6';
-import { fetchForecast, outlook } from './forecast.js?v=6';
-import { parsePower, analyze, riskBand, looksLikeWater, SOILS, OUT, SEASON_DAYS } from './analysis.js?v=6';
-import { LANGS, t, setLang, getLang, locale, applyStatic } from './i18n.js?v=6';
+import { CROPS, MATURITY } from './crops.js?v=7';
+import { fetchDaily } from './power.js?v=7';
+import { ndviTargets, compareNdvi, assignGreenups, TOLERANCE } from './ndvi.js?v=7';
+import { fetchNdvi, fetchGreenups } from './modis.js?v=7';
+import { fetchForecast, outlook } from './forecast.js?v=7';
+import { parsePower, analyze, riskBand, looksLikeWater, SOILS, OUT, SEASON_DAYS } from './analysis.js?v=7';
+import { LANGS, t, setLang, getLang, locale, applyStatic } from './i18n.js?v=7';
 
 const $ = (id) => document.getElementById(id);
 const DAY = 86400000;
@@ -40,14 +40,15 @@ const fmtDate = (ms, opts = { month: 'short', day: 'numeric' }) => new Date(ms).
 for (const [k, name] of Object.entries(LANGS)) $('lang').add(new Option(name, k));
 $('lang').value = getLang();
 $('units').value = units;
-$('lang').addEventListener('change', () => { setLang($('lang').value); ls.set('seedline:lang', getLang()); refreshText(); });
-$('units').addEventListener('change', () => { units = $('units').value; ls.set('seedline:units', units); if (current) render(); });
+$('lang').addEventListener('change', () => { setLang($('lang').value); ls.set('seedline:lang', getLang()); refreshText(); syncProfile(); });
+$('units').addEventListener('change', () => { units = $('units').value; ls.set('seedline:units', units); if (current) render(); syncProfile(); });
 
 function refreshText() {
   applyStatic();
   for (const [k, m] of Object.entries(MATURITY)) [...$('maturity').options].find((o) => o.value === k).textContent = t(`mat.${k}`);
   buildChips();
   buildAssume();
+  renderAccount();
   if (current) render();
 }
 
@@ -190,7 +191,8 @@ async function run() {
   ndviAbort?.abort();
   const maturity = $('maturity').value, irrigated = $('irrigated').checked, soil = $('soil').value;
   const key = cropKey;
-  location.hash = `${lat.toFixed(4)},${lon.toFixed(4)},${key},${maturity},${irrigated ? 1 : 0},${soil}`;
+  const hash = `#${lat.toFixed(4)},${lon.toFixed(4)},${key},${maturity},${irrigated ? 1 : 0},${soil}`;
+  location.hash = hash;
   ls.set('seedline:last', location.hash);
   $('go').disabled = true;
   $('output').hidden = true;
@@ -208,7 +210,8 @@ async function run() {
     const crop = cropFor(key);
     const opts = { irrigated, gddScale: MATURITY[maturity].scale, soilCapacity: SOILS[soil] };
     const result = analyze(series, crop, lat, opts);
-    current = { series, result, crop, cropKey: key, lat, lon, irrigated, maturity, soil, opts };
+    current = { series, result, crop, cropKey: key, lat, lon, irrigated, maturity, soil, opts, hash };
+    saveToAccount(current);
     // Unhide first: the charts measure their containers to size themselves.
     $('status').hidden = true;
     $('output').hidden = false;
@@ -237,6 +240,7 @@ function render() {
   renderSatStrip();
   renderForecast();
   renderAlternatives();
+  renderMyFields();
 }
 let resizeTimer;
 addEventListener('resize', () => { clearTimeout(resizeTimer); resizeTimer = setTimeout(() => current && render(), 150); });
@@ -826,6 +830,137 @@ $('csv').addEventListener('click', () => {
   a.download = `seedline_${current.cropKey}_${current.lat.toFixed(2)}_${current.lon.toFixed(2)}.csv`;
   a.click();
   URL.revokeObjectURL(a.href);
+});
+
+// ----------------------------------------------------------------- accounts
+// Optional Google sign-in. The module is loaded on the side so the app never
+// waits for it, and guests (or anyone offline) are unaffected if it fails.
+
+let account = null;   // the loaded account module, once Firebase is reachable
+let user = null;
+let myRuns = [];
+let authKnown = false;
+
+function showSignin(on) {
+  $('signin').hidden = !on;
+  document.body.classList.toggle('signing-in', on);
+  if (on) { $('authMsg').hidden = true; (account ? $('googleBtn') : $('guestBtn')).focus(); }
+}
+
+function renderAccount() {
+  if (!account) { $('acct').hidden = $('pickAcct').hidden = true; return; }
+  const name = user ? (user.displayName || user.email || '').trim() : '';
+  const first = name.split(/\s+/)[0] || '';
+  const avatar = !user ? '' : user.photoURL
+    ? `<img src="${esc(user.photoURL)}" alt="" referrerpolicy="no-referrer">`
+    : `<span class="initial">${esc(first.slice(0, 1).toUpperCase() || '?')}</span>`;
+  $('acct').innerHTML = user
+    ? `<span class="who" title="${esc(t('auth.as', { name }))}">${avatar}<b>${esc(first)}</b></span><button type="button" class="acctbtn" data-acct="out">${t('auth.signout')}</button>`
+    : `<button type="button" class="acctbtn" data-acct="in">${t('auth.signin')}</button>`;
+  $('pickAcct').innerHTML = user
+    ? `<span class="who">${avatar}<span>${esc(t('auth.as', { name: first }))}</span></span><button type="button" class="linkbtn" data-acct="out">${t('auth.signout')}</button>`
+    : `<button type="button" class="ghost" data-acct="in">${t('auth.pickhint')}</button>`;
+  $('acct').hidden = $('pickAcct').hidden = !authKnown;
+  renderMyFields();
+}
+
+function renderMyFields() {
+  const el = $('myFields');
+  const seen = new Set();
+  const list = user ? myRuns.filter((r) => r.hash && !seen.has(r.hash) && seen.add(r.hash)).slice(0, 6) : [];
+  el.hidden = !list.length;
+  if (!list.length) { el.innerHTML = ''; return; }
+  el.innerHTML = `<h3>${t('auth.myfields')}</h3>${list.map((r) => {
+    const win = r.viable && r.openMs ? `${esc(fmtDate(r.openMs))} – ${esc(fmtDate(r.closeMs))}` : t('alt.none');
+    return `<button type="button" class="myfield" data-hash="${esc(r.hash)}"><span class="mfcrop"><span aria-hidden="true">${ICON[r.crop] ?? '🌱'}</span> ${esc(CROPS[r.crop] ? cropName(r.crop) : r.crop)}</span><span class="mfwhere">${(+r.lat).toFixed(2)}°, ${(+r.lon).toFixed(2)}°</span><span class="mfwin">${win}</span></button>`;
+  }).join('')}`;
+}
+
+function saveToAccount(r) {
+  if (!account || !user) return;
+  if (myRuns[0]?.hash === r.hash) return;   // same field and settings as last time
+  const rec = r.result.rec, ok = !!rec?.viable;
+  // Firestore rejects undefined, so every field has a value.
+  const entry = {
+    hash: r.hash, lat: +r.lat.toFixed(4), lon: +r.lon.toFixed(4), crop: r.cropKey, maturity: r.maturity,
+    irrigated: r.irrigated, soil: r.soil, viable: ok, risk: ok ? rec.risk : null,
+    openMs: ok ? rec.seasonStartMs + rec.open * DAY : null, closeMs: ok ? rec.seasonStartMs + rec.close * DAY : null,
+  };
+  myRuns = [entry, ...myRuns.filter((x) => x.hash !== entry.hash)].slice(0, 20);
+  renderMyFields();
+  account.saveRun(entry).catch((e) => console.warn('Seedline: could not save this field to your account.', e));
+}
+
+function syncProfile() {
+  if (account && user) account.saveProfile({ lang: getLang(), units }).catch((e) => console.warn('Seedline: could not save settings.', e));
+}
+
+function applyProfile(p) {
+  let changed = false;
+  if (p.lang && LANGS[p.lang] && p.lang !== getLang()) { setLang(p.lang); ls.set('seedline:lang', p.lang); $('lang').value = p.lang; changed = true; }
+  if ((p.units === 'metric' || p.units === 'imperial') && p.units !== units) { units = p.units; ls.set('seedline:units', units); $('units').value = units; changed = true; }
+  if (changed) refreshText();
+}
+
+const AUTH_ERR = { 'auth/popup-blocked': 'auth.err.popup', 'auth/unauthorized-domain': 'auth.err.domain', 'auth/network-request-failed': 'auth.err.network', 'auth/operation-not-allowed': 'auth.err.domain' };
+async function doSignIn() {
+  if (!account) return;
+  $('googleBtn').disabled = true;
+  try {
+    await account.signIn();
+    showSignin(false);
+  } catch (e) {
+    if (e?.code !== 'auth/popup-closed-by-user' && e?.code !== 'auth/cancelled-popup-request') {
+      $('authMsg').hidden = false;
+      $('authMsg').textContent = t(AUTH_ERR[e?.code] ?? 'auth.err.other');
+      console.warn('Seedline: sign-in failed.', e);
+    }
+  } finally {
+    $('googleBtn').disabled = false;
+  }
+}
+
+$('googleBtn').addEventListener('click', doSignIn);
+$('guestBtn').addEventListener('click', () => { ls.set('seedline:guest', '1'); showSignin(false); });
+$('signin').addEventListener('keydown', (e) => { if (e.key === 'Escape') $('guestBtn').click(); });
+document.addEventListener('click', (e) => {
+  const act = e.target.closest('[data-acct]')?.dataset.acct;
+  if (act === 'in') showSignin(true);
+  if (act === 'out') account?.signOutUser().catch(() => {});
+  const field = e.target.closest('.myfield');
+  if (field) applyHash(field.dataset.hash);
+});
+
+// First-time visitors meet the sign-in screen straight away (no flash of the
+// map first). People who chose to stay a guest, who were signed in last time,
+// or who arrived through a shared link go straight to the app.
+const arrivedWithLink = /^#-?\d/.test(location.hash);
+if (!arrivedWithLink && !ls.get('seedline:guest') && !ls.get('seedline:signedin')) showSignin(true);
+
+import('./account.js?v=7').then((mod) => {
+  account = mod;
+  $('googleBtn').disabled = false;
+  account.onUser(async (u) => {
+    user = u;
+    authKnown = true;
+    if (u) {
+      ls.set('seedline:signedin', '1');
+      ls.del('seedline:guest');
+      showSignin(false);
+      renderAccount();
+      try { applyProfile(await account.loadProfile()); } catch (e) { console.warn('Seedline: could not load settings.', e); }
+      try { myRuns = await account.recentRuns(); } catch (e) { console.warn('Seedline: could not load your fields.', e); myRuns = []; }
+      if (current && user) saveToAccount(current);   // a field checked before sign-in finished
+    } else {
+      ls.del('seedline:signedin');
+      myRuns = [];
+    }
+    renderAccount();
+  });
+}).catch((e) => {
+  // Firebase unreachable (offline, blocked network): carry on as a guest.
+  console.warn('Seedline: accounts unavailable.', e);
+  showSignin(false);
 });
 
 // ------------------------------------------------------------------ start-up

@@ -38,6 +38,8 @@ npm test
 - **Editable crop assumptions**, °C/mm or °F/inches, English, Spanish and
   French, a print layout, shareable links, and offline reuse of the last
   fields through a service worker.
+- **Farmer accounts (optional)**: sign in with Google to keep a "My fields"
+  list and carry language and units across devices. Guests lose nothing.
 - **A validation page** (`validation.html`) that runs the model for 20
   crop-and-region pairs and scores it against published planting calendars.
 
@@ -94,6 +96,29 @@ late in the monsoon tropics. The reference periods in
 `js/validation-sites.js` were transcribed from memory of USDA and FAO crop
 calendars and still need checking against the sources.
 
+**Accounts.** `js/account.js` uses Firebase Auth (Google sign-in) and Cloud
+Firestore. Each check a signed-in farmer runs is saved under
+`users/{uid}/runs`, and their language and units under `users/{uid}`. The app
+loads the module on the side, so it never waits on Firebase and keeps working
+if Firebase cannot be reached. First-time visitors see a sign-in screen with a
+"Continue without an account" option; shared links skip it.
+
+To set up the Firebase project: enable the Google provider (Authentication →
+Sign-in method), add the site's domain under Authentication → Settings →
+Authorized domains, and use these Firestore rules so each farmer can only
+reach their own data:
+
+```
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    match /users/{uid}/{document=**} {
+      allow read, write: if request.auth != null && request.auth.uid == uid;
+    }
+  }
+}
+```
+
 ## Layout
 
 | Path | What |
@@ -105,6 +130,7 @@ calendars and still need checking against the sources.
 | `js/modis.js` | MODIS green-up and NDVI fetch with retry and browser cache. |
 | `js/forecast.js` | Open-Meteo forecast and the plant-now-or-wait rules. |
 | `js/i18n.js` | Interface text in English, Spanish and French. |
+| `js/account.js` | Firebase sign-in and saved fields. |
 | `js/validation-sites.js`, `js/validate.js`, `validation.html` | Validation against planting calendars. |
 | `sw.js` | Service worker: network first, cache as the offline fallback. |
 | `js/app.js` | Map, controls and charts. |
