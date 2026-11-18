@@ -1,12 +1,12 @@
 // Bump ?v= here and in index.html whenever these files change, so browsers
 // never pair a new page with stale cached scripts or styles.
-import { CROPS, MATURITY } from './crops.js?v=7';
-import { fetchDaily } from './power.js?v=7';
-import { ndviTargets, compareNdvi, assignGreenups, TOLERANCE } from './ndvi.js?v=7';
-import { fetchNdvi, fetchGreenups } from './modis.js?v=7';
-import { fetchForecast, outlook } from './forecast.js?v=7';
-import { parsePower, analyze, riskBand, looksLikeWater, SOILS, OUT, SEASON_DAYS } from './analysis.js?v=7';
-import { LANGS, t, setLang, getLang, locale, applyStatic } from './i18n.js?v=7';
+import { CROPS, MATURITY } from './crops.js?v=8';
+import { fetchDaily } from './power.js?v=8';
+import { ndviTargets, compareNdvi, assignGreenups, TOLERANCE } from './ndvi.js?v=8';
+import { fetchGreenups, pixelKey } from './modis.js?v=8';
+import { fetchForecast, outlook } from './forecast.js?v=8';
+import { parsePower, analyze, riskBand, looksLikeWater, SOILS, OUT, SEASON_DAYS } from './analysis.js?v=8';
+import { LANGS, t, setLang, getLang, locale, applyStatic } from './i18n.js?v=8';
 
 const $ = (id) => document.getElementById(id);
 const DAY = 86400000;
@@ -187,8 +187,7 @@ async function run() {
   const lat = +$('lat').value, lon = +$('lon').value;
   if (!Number.isFinite(lat) || !Number.isFinite(lon) || Math.abs(lat) > 90) return;
   const id = ++runId;
-  ndviRun++;
-  ndviAbort?.abort();
+  startSatellite(lat, lon);   // runs alongside the weather download
   const maturity = $('maturity').value, irrigated = $('irrigated').checked, soil = $('soil').value;
   const key = cropKey;
   const hash = `#${lat.toFixed(4)},${lon.toFixed(4)},${key},${maturity},${irrigated ? 1 : 0},${soil}`;
@@ -236,7 +235,7 @@ function render() {
   renderShift();
   renderHeat();
   renderTable();
-  if (current.ndvi) renderNdvi(); else resetNdvi();
+  renderNdvi();
   renderSatStrip();
   renderForecast();
   renderAlternatives();
@@ -662,20 +661,37 @@ function renderHeat() {
 }
 
 // ---------------------------------------------------------- satellite check
+// Green-up dates belong to the pixel, not the crop, so they are fetched once per
+// field, starting the moment a field is chosen (alongside the weather), and
+// every crop and setting at that field reuses them. NASA's service can take up
+// to a minute when it is busy; by starting early the answer is usually ready by
+// the time anyone looks, and the rest of the page never waits for it.
 
-let ndviRun = 0;
-let ndviAbort = null;
+let sat = { key: null, status: 'idle', data: null, ctrl: null };
+
+function startSatellite(lat, lon) {
+  const key = pixelKey(lat, lon);
+  if (sat.key === key && (sat.status === 'loading' || sat.status === 'ok')) return;
+  sat.ctrl?.abort();   // free the browser's connections for the new field
+  const ctrl = new AbortController();
+  const mine = { key, status: 'loading', data: null, ctrl };
+  sat = mine;
+  fetchGreenups(lat, lon, { signal: ctrl.signal })
+    .then((data) => { mine.status = 'ok'; mine.data = data; })
+    .catch((e) => { if (!ctrl.signal.aborted) { mine.status = 'failed'; console.warn('Seedline: satellite check failed.', e); } })
+    .finally(() => { if (sat === mine && current && pixelKey(current.lat, current.lon) === key) { renderNdvi(); renderSatStrip(); } });
+}
 
 const satSupported = () => !current.crop.winter && ndviTargets(current.result).length > 0;
 
-function resetNdvi() {
-  const n = satSupported();
-  $('ndviLegend').innerHTML = ''; $('ndviChart').innerHTML = ''; $('ndviNote').hidden = true;
-  $('ndviBody').innerHTML = n
-    ? `<div class="ndvistart"><button type="button" id="ndviGo" class="primary">${t('sat.start')}</button><span class="hint">${t('sat.start.d')}</span></div>`
-    : `<p class="sub">${t(current.crop.winter ? 'sat.winter' : 'sat.none')}</p>`;
-  $('ndviGo')?.addEventListener('click', runNdvi);
+/** Where the satellite check stands for the field and crop on screen. */
+function satView() {
+  if (!satSupported()) return { status: 'unsupported' };
+  if (sat.key !== pixelKey(current.lat, current.lon)) startSatellite(current.lat, current.lon);
+  if (sat.status !== 'ok') return { status: sat.status };
+  return { status: 'ok', data: sat.data, cmp: compareNdvi(current.result, current.crop, assignGreenups(current.result, sat.data.greens)) };
 }
+function retrySatellite() { if (current) { startSatellite(current.lat, current.lon); renderNdvi(); renderSatStrip(); } }
 
 const SAT_ICON = '<svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true"><g transform="rotate(-35 12 12)" fill="currentColor"><rect x="9" y="9" width="6" height="6" rx="1"/><rect x="1.500" y="10" width="6" height="4" rx=".5"/><rect x="16.500" y="10" width="6" height="4" rx=".5"/></g></svg>';
 const verdictText = (s) => t(`v.${s.verdict}.d`, { inside: s.inside, judged: s.judged, greened: s.greened, checked: s.checked, n: Math.abs(Math.round(s.offset)) });
@@ -684,83 +700,51 @@ const verdictText = (s) => t(`v.${s.verdict}.d`, { inside: s.inside, judged: s.j
 function renderSatStrip() {
   const el = $('satStrip');
   if (!el) return;
-  if (!satSupported()) { el.hidden = true; return; }
+  const v = satView();
+  if (v.status === 'unsupported') { el.hidden = true; return; }
   el.hidden = false;
-  const nd = current.ndvi;
-  const more = `<button type="button" class="ghost" data-sat="more">${t('sat.more')}</button>`;
-  let cls = 'idle', html;
-  if (!nd) html = `<div><b>${t('sat.idle')}</b> ${t('sat.idle.d')}</div><button type="button" class="primary" data-sat="go">${t('sat.run')}</button>`;
-  else if (!nd.state.finished) {
-    cls = 'busy';
-    html = `<div><b>${t('sat.busy')}</b> ${t('sat.busy.d', { done: nd.state.done, total: nd.state.total })}<div class="progress wide"><span style="width:${(nd.state.done / Math.max(1, nd.state.total)) * 100}%;animation:none"></span></div></div>${more}`;
-  } else if (nd.state.failedAll) html = `<div><b>${t('sat.unavail')}</b> ${t('sat.unavail.d')}</div><button type="button" class="primary" data-sat="go">${t('sat.retry')}</button>`;
-  else {
-    const s = nd.cmp.summary;
+  let cls = v.status, html;
+  if (v.status === 'ok') {
+    const s = v.cmp.summary;
     cls = s.verdict;
-    html = `<div><b>${t(`v.${s.verdict}`)}.</b> ${esc(verdictText(s))}</div>${more}`;
+    html = `<div><b>${t(`v.${s.verdict}`)}.</b> ${esc(verdictText(s))}</div><button type="button" class="ghost" data-sat="more">${t('sat.more')}</button>`;
+  } else if (v.status === 'failed') {
+    html = `<div><b>${t('sat.unavail')}</b> ${t('sat.unavail.d')}</div><button type="button" class="primary" data-sat="retry">${t('sat.retry')}</button>`;
+  } else {
+    cls = 'busy';
+    html = `<div><b>${t('sat.busy')}</b> ${t('sat.busy.d')}<div class="progress wide"><span></span></div></div>`;
   }
   el.className = `satstrip ${cls}`;
   el.innerHTML = `<span class="saticon">${SAT_ICON}</span>${html}`;
-  el.querySelector('[data-sat=go]')?.addEventListener('click', runNdvi);
+  el.querySelector('[data-sat=retry]')?.addEventListener('click', retrySatellite);
   el.querySelector('[data-sat=more]')?.addEventListener('click', () => $('ndviCard').scrollIntoView({ behavior: reduceMotion ? 'auto' : 'smooth', block: 'start' }));
 
   const ribbon = $('rec').querySelector('.ribbon');
   ribbon?.querySelector('.mark.green')?.remove();
-  const g = nd?.cmp.summary.medianGreen;
+  const g = v.cmp?.summary.medianGreen;
   if (ribbon && Number.isFinite(g)) ribbon.insertAdjacentHTML('beforeend', `<div class="mark green" style="left:${((((g % 365) + 365) % 365) / 365) * 100}%"><b>${t('mark.green')}</b></div>`);
 }
 
-async function runNdvi() {
-  const id = ++ndviRun;
-  const run = current;
-  const { result, crop, lat, lon } = run;
-  const ctrl = new AbortController();
-  ndviAbort = ctrl;
-  const state = { done: 0, total: 4, finished: false, failedAll: false, source: 'fast', failed: 0 };
-  let observed = [];
-  const update = () => {
-    if (id !== ndviRun) return;
-    run.ndvi = { cmp: compareNdvi(result, crop, observed), state };
-    if (run === current) { renderNdvi(); renderSatStrip(); }
-  };
-  update();
-
-  // Fast path: NASA's yearly green-up record, four small requests.
-  const targets = ndviTargets(result);
-  const years = targets.map((x) => x.year);
-  let fastOk = false;
-  try {
-    const greens = await fetchGreenups(lat, lon, Math.max(2001, Math.min(...years) - 1), Math.max(...years) + 1, ctrl.signal, (done, total) => { state.done = done; state.total = total; update(); });
-    observed = assignGreenups(result, greens);
-    fastOk = observed.some((o) => Number.isFinite(o.greenMs));
-  } catch { /* fall through to the slow path */ }
-  if (id !== ndviRun) return;
-
-  // Fallback: read raw NDVI season by season (slow, one request per season).
-  if (!fastOk) {
-    state.source = 'slow'; state.done = 0; state.total = targets.length; observed = [];
-    update();
-    const queue = [...targets];
-    await Promise.all([0, 1].map(async () => {
-      for (let q; id === ndviRun && (q = queue.shift());) {
-        try { observed.push({ year: q.year, points: await fetchNdvi(lat, lon, q.dates, ctrl.signal) }); } catch { state.failed++; }
-        state.done++;
-        update();
-      }
-    }));
-    state.failedAll = state.failed === targets.length;
-  }
-  state.finished = true;
-  update();
-}
-
 function renderNdvi() {
-  const { cmp, state } = current.ndvi;
+  const v = satView();
+  const host = $('ndviChart');
+  const clearChart = () => { host.innerHTML = ''; $('ndviLegend').innerHTML = ''; $('ndviNote').hidden = true; };
+  if (v.status === 'unsupported') {
+    clearChart();
+    $('ndviBody').innerHTML = `<p class="sub">${t(current.crop.winter ? 'sat.winter' : 'sat.none')}</p>`;
+    return;
+  }
+  if (v.status !== 'ok') {
+    clearChart();
+    $('ndviBody').innerHTML = v.status === 'failed'
+      ? `<p class="sub">${t('sat.unavail')} ${t('sat.unavail.d')} <button type="button" id="ndviGo" class="ghost">${t('sat.retry')}</button></p>`
+      : `<div class="ndviprog"><div class="progress wide"><span></span></div><span class="hint">${t('sat.busy.d')}</span></div>`;
+    $('ndviGo')?.addEventListener('click', retrySatellite);
+    return;
+  }
+  const { cmp, data } = v;
   const s = cmp.summary;
-  let html = '';
-  if (!state.finished) html += `<div class="ndviprog"><div class="progress wide"><span style="width:${(state.done / Math.max(1, state.total)) * 100}%;animation:none"></span></div><span class="hint">${t('sat.busy.d', { done: state.done, total: state.total })}</span></div>${state.source === 'slow' ? `<p class="hint">${t('sat.fallback')}</p>` : ''}`;
-  if (state.finished && state.failedAll) html += `<p class="sub">${t('sat.unavail')} ${t('sat.unavail.d')} <button type="button" id="ndviGo" class="ghost">${t('sat.retry')}</button></p>`;
-  else if (state.finished || s.verdict !== 'pending') html += `<div class="verdict ${s.verdict}"><b>${t(`v.${s.verdict}`)}.</b> ${esc(verdictText(s))}</div>`;
+  let html = `<div class="verdict ${s.verdict}"><b>${t(`v.${s.verdict}`)}.</b> ${esc(verdictText(s))}</div>`;
   if (s.greened) {
     const off = Math.round(s.offset);
     const strength = !Number.isFinite(s.rho) ? null : s.rho >= 0.5 ? 'strong' : s.rho >= 0.25 ? 'moderate' : s.rho > -0.25 ? 'weak' : 'opposite';
@@ -768,15 +752,13 @@ function renderNdvi() {
       <div class="tile"><div class="k">${t('st.green.k')}</div><div class="v">${esc(lab(Math.round(s.medianGreen)))}</div><div class="d">${t('st.green.d')}</div></div>
       <div class="tile"><div class="k">${t('st.implied.k')}</div><div class="v">${esc(lab(Math.round(s.medianImplied)))}</div><div class="d">${Math.abs(off) < 2 ? t('st.implied.on') : t(off < 0 ? 'st.implied.before' : 'st.implied.after', { n: Math.abs(off) })}</div></div>
       ${strength ? `<div class="tile"><div class="k">${t('st.rho.k')}</div><div class="v">${t(`rho.${strength}`)}</div><div class="d">${t('st.rho.d', { r: s.rho.toFixed(2) })}</div></div>` : ''}
-      ${Number.isFinite(s.medianPeak) ? `<div class="tile"><div class="k">${t('st.peak.k')}</div><div class="v">${s.medianPeak.toFixed(2)}</div><div class="d">${t('st.peak.d')}</div></div>` : `<div class="tile"><div class="k">${t('st.n.k')}</div><div class="v">${s.greened} / ${s.checked}</div><div class="d">${t('st.n.d')}</div></div>`}
+      <div class="tile"><div class="k">${t('st.n.k')}</div><div class="v">${s.greened} / ${s.checked}</div><div class="d">${t('st.n.d')}</div></div>
     </div>`;
   }
   $('ndviBody').innerHTML = html;
-  $('ndviGo')?.addEventListener('click', runNdvi);
   $('ndviNote').hidden = !s.greened;
-  $('ndviNote').textContent = `${t('sat.note', { lag: s.lag, tol: TOLERANCE })} ${t(state.source === 'fast' ? 'sat.src.fast' : 'sat.src.slow')}`;
+  $('ndviNote').textContent = `${t('sat.note', { lag: s.lag, tol: TOLERANCE })} ${data.source === 'saved' ? t('sat.src.saved', { date: fmtDate(Date.parse(data.fetched), { year: 'numeric', month: 'short', day: 'numeric' }) }) : t('sat.src.fast')}`;
 
-  const host = $('ndviChart');
   const rows = cmp.years;
   if (!s.greened || rows.length < 2) { host.innerHTML = ''; $('ndviLegend').innerHTML = ''; return; }
   $('ndviLegend').innerHTML = `<span><i class="sw" style="background:var(--window)"></i>${t('sat.leg.safe')}</span><span><i class="sw dot" style="background:var(--o-short)"></i>${t('sat.leg.in')}</span><span><i class="sw dot ring"></i>${t('sat.leg.out')}</span>`;
@@ -937,7 +919,7 @@ document.addEventListener('click', (e) => {
 const arrivedWithLink = /^#-?\d/.test(location.hash);
 if (!arrivedWithLink && !ls.get('seedline:guest') && !ls.get('seedline:signedin')) showSignin(true);
 
-import('./account.js?v=7').then((mod) => {
+import('./account.js?v=8').then((mod) => {
   account = mod;
   $('googleBtn').disabled = false;
   account.onUser(async (u) => {

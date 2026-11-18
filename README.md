@@ -75,16 +75,29 @@ autumn frost, season heat and rainfall are tested with a Theil–Sen slope and a
 Mann–Kendall significance test, and the 1981–2000 window is compared with the
 last 15 years.
 
-**Satellite check.** On request, the app asks NASA's
+**Satellite check.** As soon as a field is chosen, alongside the weather
+download, the app asks NASA's
 [ORNL DAAC subset service](https://modis.ornl.gov/data/modis_webservice.html)
-for the yearly mid-green-up dates of the pixel under the pin (MCD12Q2, 500 m):
-four small requests cover 15 seasons. Stepping back from green-up by emergence
-plus about 30 days gives a satellite-implied sowing date, which is compared
-with the dates the weather model called safe in that same year (`js/ndvi.js`).
-If that product has nothing for the pixel, the app falls back to dating
-green-up itself from 16-day NDVI (MOD13Q1, 250 m), one slower request per
-season. Autumn-sown crops are excluded: their spring green-up says little
-about the sowing date.
+for the yearly mid-green-up dates of the pixel under the pin (MCD12Q2, 500 m,
+both growing cycles of each year, last 18 years): four small requests, all
+sent at once. Stepping back from green-up by emergence plus about 30 days gives
+a satellite-implied sowing date, which is compared with the dates the weather
+model called safe in that same year (`js/ndvi.js`). Autumn-sown crops are
+excluded: their spring green-up says little about the sowing date.
+
+NASA's service is the slow part, and its speed varies a lot: a request can take
+1–5 seconds on a quiet day and 10–60 seconds on a busy one, after which its
+gateway gives up with an error. Requests sent together come back together, so
+the wait is NASA's queue rather than anything in the app. To keep that off the
+critical path:
+
+- the check starts by itself and never holds up the rest of the page;
+- green-up belongs to the pixel, so a field is fetched once and every crop and
+  setting there reuses it; answers are also kept in the browser;
+- the example fields ship with a saved copy of their NASA data
+  (`data/greenups.json`), so a demo never waits on NASA;
+- a request that fails quickly is retried once; one that fails after a long
+  wait is not, and the farmer gets a "Try again" button instead.
 
 **Forecast.** A 16-day Open-Meteo forecast is turned into go / wait advice by
 `outlook()` in `js/forecast.js`.
@@ -127,7 +140,8 @@ service cloud.firestore {
 | `js/crops.js` | Crop parameters (GDD base and target, frost and heat limits). |
 | `js/power.js` | NASA POWER fetch. |
 | `js/ndvi.js` | Satellite check: green-up dating and comparison with the model. No DOM. |
-| `js/modis.js` | MODIS green-up and NDVI fetch with retry and browser cache. |
+| `js/modis.js` | NASA green-up fetch: all requests at once, time limit, browser cache, saved copy. |
+| `data/greenups.json` | Saved NASA green-up dates for the example fields. |
 | `js/forecast.js` | Open-Meteo forecast and the plant-now-or-wait rules. |
 | `js/i18n.js` | Interface text in English, Spanish and French. |
 | `js/account.js` | Firebase sign-in and saved fields. |
