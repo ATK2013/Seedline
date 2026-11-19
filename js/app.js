@@ -1,12 +1,12 @@
 // Bump ?v= here and in index.html whenever these files change, so browsers
 // never pair a new page with stale cached scripts or styles.
-import { CROPS, MATURITY } from './crops.js?v=8';
-import { fetchDaily } from './power.js?v=8';
-import { ndviTargets, compareNdvi, assignGreenups, TOLERANCE } from './ndvi.js?v=8';
-import { fetchGreenups, pixelKey } from './modis.js?v=8';
-import { fetchForecast, outlook } from './forecast.js?v=8';
-import { parsePower, analyze, riskBand, looksLikeWater, SOILS, OUT, SEASON_DAYS } from './analysis.js?v=8';
-import { LANGS, t, setLang, getLang, locale, applyStatic } from './i18n.js?v=8';
+import { CROPS, MATURITY } from './crops.js?v=9';
+import { fetchDaily } from './power.js?v=9';
+import { ndviTargets, compareNdvi, assignGreenups, TOLERANCE } from './ndvi.js?v=9';
+import { fetchGreenups, pixelKey } from './modis.js?v=9';
+import { fetchForecast, outlook } from './forecast.js?v=9';
+import { parsePower, analyze, riskBand, looksLikeWater, SOILS, OUT, SEASON_DAYS } from './analysis.js?v=9';
+import { LANGS, t, setLang, getLang, locale, applyStatic } from './i18n.js?v=9';
 
 const $ = (id) => document.getElementById(id);
 const DAY = 86400000;
@@ -49,6 +49,7 @@ function refreshText() {
   buildChips();
   buildAssume();
   renderAccount();
+  renderEmailForm();
   if (current) render();
 }
 
@@ -815,29 +816,51 @@ $('csv').addEventListener('click', () => {
 });
 
 // ----------------------------------------------------------------- accounts
-// Optional Google sign-in. The module is loaded on the side so the app never
-// waits for it, and guests (or anyone offline) are unaffected if it fails.
+// Optional sign-in, with Google or with an email and password. The module is
+// loaded on the side so the app never waits for it, and guests (or anyone
+// offline) are unaffected if it fails.
 
 let account = null;   // the loaded account module, once Firebase is reachable
 let user = null;
 let myRuns = [];
 let authKnown = false;
 
+let emailMode = 'signin';   // the email form: 'signin' or 'create'
+
 function showSignin(on) {
   $('signin').hidden = !on;
   document.body.classList.toggle('signing-in', on);
-  if (on) { $('authMsg').hidden = true; (account ? $('googleBtn') : $('guestBtn')).focus(); }
+  if (on) {
+    authMessage(null);
+    emailMode = 'signin';
+    $('authPass').value = '';
+    $('authPass').type = 'password';
+    for (const id of ['authEmail', 'authPass']) $(id).removeAttribute('aria-invalid');
+    renderEmailForm();
+    (account ? $('googleBtn') : $('guestBtn')).focus();
+  }
+}
+
+/** One message line on the sign-in screen, for errors and for good news. */
+function authMessage(key, vars, kind = 'error') {
+  const el = $('authMsg');
+  el.hidden = !key;
+  if (!key) return;
+  el.className = `authmsg ${kind}`;
+  el.textContent = t(key, vars);
 }
 
 function renderAccount() {
   if (!account) { $('acct').hidden = $('pickAcct').hidden = true; return; }
-  const name = user ? (user.displayName || user.email || '').trim() : '';
+  // Email accounts may have no name: fall back to the part of the email before the @.
+  const name = user ? (user.displayName || '').trim() || (user.email || '').split('@')[0] : '';
+  const full = user ? (user.displayName || '').trim() || user.email || '' : '';
   const first = name.split(/\s+/)[0] || '';
   const avatar = !user ? '' : user.photoURL
     ? `<img src="${esc(user.photoURL)}" alt="" referrerpolicy="no-referrer">`
     : `<span class="initial">${esc(first.slice(0, 1).toUpperCase() || '?')}</span>`;
   $('acct').innerHTML = user
-    ? `<span class="who" title="${esc(t('auth.as', { name }))}">${avatar}<b>${esc(first)}</b></span><button type="button" class="acctbtn" data-acct="out">${t('auth.signout')}</button>`
+    ? `<span class="who" title="${esc(t('auth.as', { name: full }))}">${avatar}<b>${esc(first)}</b></span><button type="button" class="acctbtn" data-acct="out">${t('auth.signout')}</button>`
     : `<button type="button" class="acctbtn" data-acct="in">${t('auth.signin')}</button>`;
   $('pickAcct').innerHTML = user
     ? `<span class="who">${avatar}<span>${esc(t('auth.as', { name: first }))}</span></span><button type="button" class="linkbtn" data-acct="out">${t('auth.signout')}</button>`
@@ -884,7 +907,26 @@ function applyProfile(p) {
   if (changed) refreshText();
 }
 
-const AUTH_ERR = { 'auth/popup-blocked': 'auth.err.popup', 'auth/unauthorized-domain': 'auth.err.domain', 'auth/network-request-failed': 'auth.err.network', 'auth/operation-not-allowed': 'auth.err.domain' };
+const AUTH_ERR = {
+  'auth/popup-blocked': 'auth.err.popup',
+  'auth/unauthorized-domain': 'auth.err.domain',
+  'auth/operation-not-allowed': 'auth.err.provider',
+  'auth/network-request-failed': 'auth.err.network',
+  'auth/invalid-email': 'auth.err.email',
+  'auth/missing-email': 'auth.err.noemail',
+  'auth/missing-password': 'auth.err.nopass',
+  'auth/weak-password': 'auth.err.weak',
+  'auth/password-does-not-meet-requirements': 'auth.err.weak',
+  'auth/email-already-in-use': 'auth.err.exists',
+  // With Firebase's email-enumeration protection a wrong password and an
+  // unknown email look the same, so they share one message.
+  'auth/invalid-credential': 'auth.err.wrong',
+  'auth/invalid-login-credentials': 'auth.err.wrong',
+  'auth/wrong-password': 'auth.err.wrong',
+  'auth/user-not-found': 'auth.err.wrong',
+  'auth/too-many-requests': 'auth.err.many',
+  'auth/user-disabled': 'auth.err.disabled',
+};
 async function doSignIn() {
   if (!account) return;
   $('googleBtn').disabled = true;
@@ -893,14 +935,114 @@ async function doSignIn() {
     showSignin(false);
   } catch (e) {
     if (e?.code !== 'auth/popup-closed-by-user' && e?.code !== 'auth/cancelled-popup-request') {
-      $('authMsg').hidden = false;
-      $('authMsg').textContent = t(AUTH_ERR[e?.code] ?? 'auth.err.other');
+      authMessage(AUTH_ERR[e?.code] ?? 'auth.err.other');
       console.warn('Seedline: sign-in failed.', e);
     }
   } finally {
     $('googleBtn').disabled = false;
   }
 }
+
+// ---- email and password
+
+function renderEmailForm() {
+  const create = emailMode === 'create';
+  $('nameRow').hidden = !create;
+  $('pwHint').hidden = !create;
+  $('authPass').setAttribute('autocomplete', create ? 'new-password' : 'current-password');
+  $('emailSubmit').textContent = t(create ? 'auth.f.create' : 'auth.f.signin');
+  $('modeToggle').textContent = t(create ? 'auth.f.toSignin' : 'auth.f.toCreate');
+  $('forgotBtn').hidden = create;
+  const shown = $('authPass').type === 'text';
+  $('pwToggle').textContent = t(shown ? 'auth.f.hide' : 'auth.f.show');
+  $('pwToggle').setAttribute('aria-pressed', String(shown));
+}
+
+function openEmailForm() {
+  $('emailForm').hidden = false;
+  $('emailOpen').hidden = true;
+  $('emailOpen').setAttribute('aria-expanded', 'true');
+  $('signin').querySelector('.signincard').classList.add('emailing');
+  renderEmailForm();
+  $('authEmail').focus();
+}
+
+/** Point at the field that needs fixing, with a message. */
+function fieldProblem(id, key) {
+  authMessage(key);
+  $(id).setAttribute('aria-invalid', 'true');
+  $(id).focus();
+}
+
+async function doEmailAuth(e) {
+  e.preventDefault();
+  if (!account) return;
+  const create = emailMode === 'create';
+  const email = $('authEmail').value.trim(), password = $('authPass').value, name = $('authName').value;
+  for (const id of ['authEmail', 'authPass']) $(id).removeAttribute('aria-invalid');
+  if (!email) return fieldProblem('authEmail', 'auth.err.noemail');
+  if (!password) return fieldProblem('authPass', 'auth.err.nopass');
+  if (create && password.length < 6) return fieldProblem('authPass', 'auth.err.weak');
+  authMessage(null);
+  $('emailSubmit').disabled = true;
+  try {
+    if (create) {
+      await account.createAccount(email, password, name);
+      renderAccount();   // the name is saved just after the account appears
+    } else {
+      await account.signInWithEmail(email, password);
+    }
+    $('authPass').value = '';
+    showSignin(false);
+  } catch (err) {
+    const key = AUTH_ERR[err?.code] ?? 'auth.err.other';
+    if (err?.code === 'auth/email-already-in-use') { emailMode = 'signin'; renderEmailForm(); }
+    if (key === 'auth.err.email') fieldProblem('authEmail', key);
+    else if (key === 'auth.err.wrong' || key === 'auth.err.weak') fieldProblem('authPass', key);
+    else authMessage(key);
+    console.warn('Seedline: email sign-in failed.', err);
+  } finally {
+    $('emailSubmit').disabled = !account;
+  }
+}
+
+async function doPasswordReset() {
+  if (!account) return;
+  const email = $('authEmail').value.trim();
+  if (!email) return fieldProblem('authEmail', 'auth.reset.need');
+  $('forgotBtn').disabled = true;
+  try {
+    await account.resetPassword(email, getLang());
+    authMessage('auth.reset.sent', { email }, 'ok');
+  } catch (err) {
+    if ((AUTH_ERR[err?.code] ?? '') === 'auth.err.email') fieldProblem('authEmail', 'auth.err.email');
+    else authMessage(AUTH_ERR[err?.code] ?? 'auth.err.other');
+    console.warn('Seedline: password reset failed.', err);
+  } finally {
+    $('forgotBtn').disabled = false;
+  }
+}
+
+$('emailOpen').addEventListener('click', openEmailForm);
+$('emailForm').addEventListener('submit', doEmailAuth);
+// Editing a field that was flagged clears the flag and its error message.
+$('emailForm').addEventListener('input', (e) => {
+  if (e.target.getAttribute('aria-invalid') !== 'true') return;
+  e.target.removeAttribute('aria-invalid');
+  if ($('authMsg').classList.contains('error')) authMessage(null);
+});
+$('forgotBtn').addEventListener('click', doPasswordReset);
+$('modeToggle').addEventListener('click', () => {
+  emailMode = emailMode === 'create' ? 'signin' : 'create';
+  authMessage(null);
+  renderEmailForm();
+  $(emailMode === 'create' ? 'authName' : 'authEmail').focus();
+});
+$('pwToggle').addEventListener('click', () => {
+  $('authPass').type = $('authPass').type === 'password' ? 'text' : 'password';
+  renderEmailForm();
+  $('authPass').focus();
+});
 
 $('googleBtn').addEventListener('click', doSignIn);
 $('guestBtn').addEventListener('click', () => { ls.set('seedline:guest', '1'); showSignin(false); });
@@ -919,9 +1061,10 @@ document.addEventListener('click', (e) => {
 const arrivedWithLink = /^#-?\d/.test(location.hash);
 if (!arrivedWithLink && !ls.get('seedline:guest') && !ls.get('seedline:signedin')) showSignin(true);
 
-import('./account.js?v=8').then((mod) => {
+import('./account.js?v=9').then((mod) => {
   account = mod;
   $('googleBtn').disabled = false;
+  $('emailSubmit').disabled = false;
   account.onUser(async (u) => {
     user = u;
     authKnown = true;

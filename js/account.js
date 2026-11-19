@@ -1,9 +1,12 @@
-// Farmer accounts: Google sign-in (Firebase Auth), with the fields a farmer
+// Farmer accounts: Google or email-and-password sign-in (Firebase Auth), with the fields a farmer
 // checks and their settings kept in Cloud Firestore under users/{uid}.
 // Accounts are optional: app.js loads this module on the side, so the app
 // keeps working for guests, offline, or if Firebase cannot be reached.
 import { initializeApp } from 'https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js';
-import { getAuth, GoogleAuthProvider, signInWithPopup, signOut, onAuthStateChanged } from 'https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js';
+import {
+  getAuth, GoogleAuthProvider, signInWithPopup, signOut, onAuthStateChanged,
+  createUserWithEmailAndPassword, signInWithEmailAndPassword, sendPasswordResetEmail, updateProfile,
+} from 'https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js';
 import { getFirestore, doc, getDoc, setDoc, addDoc, collection, query, orderBy, limit, getDocs, serverTimestamp } from 'https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js';
 
 // A Firebase web config is not a secret: the Firestore security rules are
@@ -24,6 +27,27 @@ const db = getFirestore(app);
 const uid = () => auth.currentUser?.uid ?? null;
 
 export const signIn = () => signInWithPopup(auth, new GoogleAuthProvider());
+
+/** Email and password: sign in to an existing account. */
+export const signInWithEmail = (email, password) => signInWithEmailAndPassword(auth, email, password);
+
+/** Email and password: create an account, with the farmer's name if given. */
+export async function createAccount(email, password, name = '') {
+  const { user } = await createUserWithEmailAndPassword(auth, email, password);
+  if (name.trim()) {
+    // The account already exists at this point, so a failure here must not
+    // look like a failed sign-up: the name is a nicety.
+    try { await updateProfile(user, { displayName: name.trim() }); } catch (e) { console.warn('Seedline: could not save the name.', e); }
+  }
+  return user;
+}
+
+/** Email a link to choose a new password, written in the farmer's language. */
+export function resetPassword(email, lang) {
+  if (lang) auth.languageCode = lang;
+  return sendPasswordResetEmail(auth, email);
+}
+
 export const signOutUser = () => signOut(auth);
 export const onUser = (fn) => onAuthStateChanged(auth, fn);
 

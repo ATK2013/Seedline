@@ -9,7 +9,7 @@
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,650&display=swap">
   <link rel="stylesheet" href="vendor/leaflet/leaflet.css">
-  <link rel="stylesheet" href="css/style.css?v=8">
+  <link rel="stylesheet" href="css/style.css?v=9">
 </head>
 <body class="picking">
   <div id="signin" class="signin" hidden role="dialog" aria-modal="true" aria-labelledby="signinTitle">
@@ -31,6 +31,21 @@
         <li data-i18n="auth.perk3"></li>
       </ul>
       <button type="button" id="googleBtn" class="google" disabled><svg viewBox="0 0 48 48" width="20" height="20" aria-hidden="true"><path fill="#EA4335" d="M24 9.5c3.54 0 6.71 1.22 9.21 3.6l6.85-6.85C35.9 2.380 30.470 0 24 0 14.620 0 6.510 5.380 2.560 13.220l7.980 6.190C12.430 13.720 17.740 9.500 24 9.500z"/><path fill="#4285F4" d="M46.980 24.550c0-1.570-.150-3.090-.380-4.550H24v9.020h12.940c-.580 2.960-2.260 5.480-4.780 7.180l7.730 6c4.510-4.180 7.090-10.360 7.090-17.650z"/><path fill="#FBBC05" d="M10.530 28.590c-.480-1.450-.760-2.990-.760-4.590s.270-3.140.760-4.590l-7.980-6.190C.920 16.460 0 20.120 0 24c0 3.880.920 7.540 2.560 10.780l7.970-6.190z"/><path fill="#34A853" d="M24 48c6.480 0 11.930-2.130 15.890-5.810l-7.730-6c-2.150 1.450-4.920 2.300-8.160 2.300-6.260 0-11.570-4.220-13.470-9.910l-7.980 6.190C6.510 42.620 14.620 48 24 48z"/></svg><span data-i18n="auth.google"></span></button>
+      <div class="or" aria-hidden="true"><span data-i18n="auth.or"></span></div>
+      <button type="button" id="emailOpen" class="emailopen" aria-expanded="false" aria-controls="emailForm"><svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true"><rect x="3" y="5" width="18" height="14" rx="2.500" fill="none" stroke="currentColor" stroke-width="1.800"/><path d="M4 7l8 6 8-6" fill="none" stroke="currentColor" stroke-width="1.800" stroke-linecap="round" stroke-linejoin="round"/></svg><span data-i18n="auth.email.open"></span></button>
+      <form id="emailForm" class="emailform" hidden novalidate>
+        <div class="formrow" id="nameRow" hidden><label for="authName" data-i18n="auth.f.name"></label><input id="authName" name="name" type="text" autocomplete="name" maxlength="80"></div>
+        <div class="formrow"><label for="authEmail" data-i18n="auth.f.email"></label><input id="authEmail" name="email" type="email" autocomplete="username" inputmode="email" autocapitalize="off" spellcheck="false"></div>
+        <div class="formrow"><label for="authPass" data-i18n="auth.f.password"></label>
+          <div class="pwrow"><input id="authPass" name="password" type="password" autocomplete="current-password" aria-describedby="pwHint"><button type="button" id="pwToggle" class="pwtoggle" aria-pressed="false" aria-controls="authPass"></button></div>
+          <span id="pwHint" class="hint" hidden data-i18n="auth.f.newhint"></span>
+        </div>
+        <button type="submit" id="emailSubmit" class="primary" disabled></button>
+        <div class="formlinks">
+          <button type="button" id="modeToggle" class="linkbtn"></button>
+          <button type="button" id="forgotBtn" class="linkbtn" data-i18n="auth.f.forgot"></button>
+        </div>
+      </form>
       <p id="authMsg" class="authmsg" role="alert" hidden></p>
       <button type="button" id="guestBtn" class="linkbtn" data-i18n="auth.guest"></button>
       <p class="fine" data-i18n="auth.fine"></p>
@@ -190,6 +205,6 @@
   <div id="tip" class="tip" hidden></div>
 
   <script src="vendor/leaflet/leaflet.js"></script>
-  <script type="module" src="js/app.js?v=8"></script>
+  <script type="module" src="js/app.js?v=9"></script>
 </body>
 </html>

@@ -38,8 +38,9 @@ npm test
 - **Editable crop assumptions**, °C/mm or °F/inches, English, Spanish and
   French, a print layout, shareable links, and offline reuse of the last
   fields through a service worker.
-- **Farmer accounts (optional)**: sign in with Google to keep a "My fields"
-  list and carry language and units across devices. Guests lose nothing.
+- **Farmer accounts (optional)**: sign in with Google or with an email and
+  password to keep a "My fields" list and carry language and units across
+  devices. Guests lose nothing.
 - **A validation page** (`validation.html`) that runs the model for 20
   crop-and-region pairs and scores it against published planting calendars.
 
@@ -109,17 +110,17 @@ late in the monsoon tropics. The reference periods in
 `js/validation-sites.js` were transcribed from memory of USDA and FAO crop
 calendars and still need checking against the sources.
 
-**Accounts.** `js/account.js` uses Firebase Auth (Google sign-in) and Cloud
-Firestore. Each check a signed-in farmer runs is saved under
+**Accounts.** `js/account.js` uses Firebase Auth (Google sign-in, or email
+and password with account creation and password reset) and Cloud Firestore. Each check a signed-in farmer runs is saved under
 `users/{uid}/runs`, and their language and units under `users/{uid}`. The app
 loads the module on the side, so it never waits on Firebase and keeps working
 if Firebase cannot be reached. First-time visitors see a sign-in screen with a
 "Continue without an account" option; shared links skip it.
 
-To set up the Firebase project: enable the Google provider (Authentication →
-Sign-in method), add the site's domain under Authentication → Settings →
-Authorized domains, and use these Firestore rules so each farmer can only
-reach their own data:
+To set up the Firebase project: enable the **Google** and **Email/Password**
+providers (Authentication → Sign-in method), add the site's domain under
+Authentication → Settings → Authorized domains (needed for Google sign-in),
+and use these Firestore rules so each farmer can only reach their own data:
 
 ```
 rules_version = '2';
