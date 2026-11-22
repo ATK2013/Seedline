@@ -9,9 +9,19 @@
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,650&display=swap">
   <link rel="stylesheet" href="vendor/leaflet/leaflet.css">
-  <link rel="stylesheet" href="css/style.css?v=7">
+  <link rel="stylesheet" href="css/style.css?v=10">
 </head>
 <body class="picking">
+  <script>
+    // Returning farmers start on My fields rather than the full-screen map; decided before the first paint.
+    try {
+      var h = location.hash, f = JSON.parse(localStorage.getItem('seedline:fields') || '[]');
+      if (h === '#fields' || /^#-?\d/.test(h) || f.length || localStorage.getItem('seedline:signedin')) {
+        document.body.classList.remove('picking');
+        if (!/^#-?\d/.test(h)) document.documentElement.dataset.start = 'home';
+      }
+    } catch (e) {}
+  </script>
   <div id="signin" class="signin" hidden role="dialog" aria-modal="true" aria-labelledby="signinTitle">
     <svg class="field" viewBox="0 0 1200 220" preserveAspectRatio="xMidYMax slice" aria-hidden="true">
       <circle class="sun" cx="960" cy="118" r="54"/>
@@ -31,6 +41,21 @@
         <li data-i18n="auth.perk3"></li>
       </ul>
       <button type="button" id="googleBtn" class="google" disabled><svg viewBox="0 0 48 48" width="20" height="20" aria-hidden="true"><path fill="#EA4335" d="M24 9.5c3.54 0 6.71 1.22 9.21 3.6l6.85-6.85C35.9 2.380 30.470 0 24 0 14.620 0 6.510 5.380 2.560 13.220l7.980 6.190C12.430 13.720 17.740 9.500 24 9.500z"/><path fill="#4285F4" d="M46.980 24.550c0-1.570-.150-3.090-.380-4.550H24v9.020h12.940c-.580 2.960-2.260 5.480-4.780 7.180l7.730 6c4.510-4.180 7.090-10.360 7.090-17.650z"/><path fill="#FBBC05" d="M10.530 28.590c-.480-1.450-.760-2.990-.760-4.590s.270-3.140.760-4.590l-7.980-6.190C.920 16.460 0 20.120 0 24c0 3.880.920 7.540 2.560 10.780l7.970-6.190z"/><path fill="#34A853" d="M24 48c6.480 0 11.930-2.130 15.890-5.810l-7.730-6c-2.150 1.450-4.920 2.300-8.160 2.300-6.260 0-11.570-4.220-13.470-9.910l-7.980 6.190C6.510 42.620 14.620 48 24 48z"/></svg><span data-i18n="auth.google"></span></button>
+      <div class="or" aria-hidden="true"><span data-i18n="auth.or"></span></div>
+      <button type="button" id="emailOpen" class="emailopen" aria-expanded="false" aria-controls="emailForm"><svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true"><rect x="3" y="5" width="18" height="14" rx="2.500" fill="none" stroke="currentColor" stroke-width="1.800"/><path d="M4 7l8 6 8-6" fill="none" stroke="currentColor" stroke-width="1.800" stroke-linecap="round" stroke-linejoin="round"/></svg><span data-i18n="auth.email.open"></span></button>
+      <form id="emailForm" class="emailform" hidden novalidate>
+        <div class="formrow" id="nameRow" hidden><label for="authName" data-i18n="auth.f.name"></label><input id="authName" name="name" type="text" autocomplete="name" maxlength="80"></div>
+        <div class="formrow"><label for="authEmail" data-i18n="auth.f.email"></label><input id="authEmail" name="email" type="email" autocomplete="username" inputmode="email" autocapitalize="off" spellcheck="false"></div>
+        <div class="formrow"><label for="authPass" data-i18n="auth.f.password"></label>
+          <div class="pwrow"><input id="authPass" name="password" type="password" autocomplete="current-password" aria-describedby="pwHint"><button type="button" id="pwToggle" class="pwtoggle" aria-pressed="false" aria-controls="authPass"></button></div>
+          <span id="pwHint" class="hint" hidden data-i18n="auth.f.newhint"></span>
+        </div>
+        <button type="submit" id="emailSubmit" class="primary" disabled></button>
+        <div class="formlinks">
+          <button type="button" id="modeToggle" class="linkbtn"></button>
+          <button type="button" id="forgotBtn" class="linkbtn" data-i18n="auth.f.forgot"></button>
+        </div>
+      </form>
       <p id="authMsg" class="authmsg" role="alert" hidden></p>
       <button type="button" id="guestBtn" class="linkbtn" data-i18n="auth.guest"></button>
       <p class="fine" data-i18n="auth.fine"></p>
@@ -49,7 +74,7 @@
         <button type="submit" class="primary" data-i18n="pick.go"></button>
       </form>
       <p id="searchMsg" class="searchmsg" hidden></p>
-      <div id="myFields" class="myfields" hidden></div>
+      <button type="button" id="pickHome" class="pickhome" data-nav="home" hidden></button>
       <div class="pickrow">
         <button type="button" class="ghost locate" data-i18n="locate"></button>
         <button type="button" id="pickLast" class="ghost" hidden data-i18n="pick.last"></button>
@@ -85,6 +110,10 @@
           <svg viewBox="0 0 24 24" width="30" height="30" aria-hidden="true"><path d="M12 22V11" stroke="currentColor" stroke-width="2" stroke-linecap="round" fill="none"/><path d="M12 12C12 7 8.5 4.5 4 4.5c0 5 3 7.5 8 7.5ZM12 15c0-4 2.800-6 7-6 0 4-2.600 6-7 6Z" fill="currentColor"/></svg>
           <span>Seedline</span>
         </div>
+        <nav class="mainnav" aria-label="Seedline">
+          <button type="button" data-nav="home" data-i18n="nav.home"></button>
+          <button type="button" data-nav="new"><span aria-hidden="true">＋</span> <span data-i18n="nav.new"></span></button>
+        </nav>
         <div class="prefs">
           <div id="acct" class="acct" hidden></div>
           <select id="lang" aria-label="Language"></select>
@@ -99,7 +128,17 @@
     </div>
   </header>
 
-  <main class="layout">
+  <main id="homeView" class="homeview" hidden>
+    <section class="homecard">
+      <div class="homehead">
+        <div><h2 data-i18n="home.title"></h2><p class="sub" id="homeSub"></p></div>
+        <button type="button" class="primary" data-nav="new"><span aria-hidden="true">＋</span> <span data-i18n="home.add"></span></button>
+      </div>
+      <div id="homeGrid" class="homegrid"></div>
+    </section>
+  </main>
+
+  <main id="fieldView" class="layout">
     <section class="panel">
       <div class="step"><b>1</b> <span data-i18n="step1"></span> <button type="button" id="expand" class="ghost" data-i18n="fullmap"></button></div>
       <div id="map" role="application" aria-label="Map"></div>
@@ -137,37 +176,45 @@
       <div id="offlineNote" class="offline" hidden data-i18n="offline"></div>
       <div id="status" class="status" hidden></div>
       <div id="output" hidden>
-        <article class="card rec" id="rec"></article>
-        <article class="card sat" id="ndviCard">
+        <div class="tabs" id="tabs" role="tablist">
+          <button type="button" role="tab" id="tab-overview" data-tab="overview" aria-controls="rec" aria-selected="false" data-i18n="tab.overview"></button>
+          <button type="button" role="tab" id="tab-options" data-tab="options" aria-controls="altCard" aria-selected="false" data-i18n="tab.options"></button>
+          <button type="button" role="tab" id="tab-risk" data-tab="risk" aria-controls="riskCard" aria-selected="false" data-i18n="tab.risk"></button>
+          <button type="button" role="tab" id="tab-history" data-tab="history" aria-controls="shiftCard heatCard" aria-selected="false" data-i18n="tab.history"></button>
+          <button type="button" role="tab" id="tab-satellite" data-tab="satellite" aria-controls="ndviCard" aria-selected="false" data-i18n="tab.satellite"></button>
+          <button type="button" role="tab" id="tab-method" data-tab="method" aria-controls="methodCard" aria-selected="false" data-i18n="tab.method"></button>
+        </div>
+        <article class="card rec tabpanel" id="rec" data-tab="overview" role="tabpanel" aria-labelledby="tab-overview"></article>
+        <article class="card sat tabpanel" id="ndviCard" data-tab="satellite" role="tabpanel" aria-labelledby="tab-satellite">
           <svg class="orbit" viewBox="0 0 220 220" aria-hidden="true">
             <circle cx="150" cy="150" r="58"/><ellipse cx="150" cy="150" rx="120" ry="44" transform="rotate(-28 150 150)"/>
             <g transform="translate(52 62) rotate(-28)"><rect x="-7" y="-7" width="14" height="14" rx="2"/><rect x="-27" y="-5" width="16" height="10" rx="1"/><rect x="11" y="-5" width="16" height="10" rx="1"/></g>
           </svg>
-          <div class="cardhead"><span class="num">01</span><div><div class="tag" data-i18n="sat.tag"></div><h2 data-i18n="sat.title"></h2>
+          <div class="cardhead"><div><div class="tag" data-i18n="sat.tag"></div><h2 data-i18n="sat.title"></h2>
           <p class="sub" data-i18n="sat.sub"></p></div></div>
           <div id="ndviBody"></div>
           <div class="legend" id="ndviLegend"></div>
           <div class="chart" id="ndviChart"></div>
           <p class="fine note" id="ndviNote" hidden></p>
         </article>
-        <article class="card" id="altCard">
-          <div class="cardhead"><span class="num">02</span><div><h2 data-i18n="alt.title"></h2><p class="sub" data-i18n="alt.sub"></p></div></div>
+        <article class="card tabpanel" id="altCard" data-tab="options" role="tabpanel" aria-labelledby="tab-options">
+          <div class="cardhead"><div><h2 data-i18n="alt.title"></h2><p class="sub" data-i18n="alt.sub"></p></div></div>
           <div class="alts"><div><h3 data-i18n="alt.maturity"></h3><div id="altMaturity" class="altlist"></div></div><div><h3 data-i18n="alt.crops"></h3><div id="altCrops" class="altlist"></div></div></div>
         </article>
-        <article class="card">
-          <div class="cardhead"><span class="num">03</span><div><h2 data-i18n="risk.title"></h2><p class="sub" data-i18n="risk.sub"></p></div></div>
+        <article class="card tabpanel" id="riskCard" data-tab="risk" role="tabpanel" aria-labelledby="tab-risk">
+          <div class="cardhead"><div><h2 data-i18n="risk.title"></h2><p class="sub" data-i18n="risk.sub"></p></div></div>
           <div class="legend" id="riskLegend"></div>
           <div class="chart" id="riskChart"></div>
         </article>
-        <article class="card">
-          <div class="cardhead"><span class="num">04</span><div><h2 data-i18n="shift.title"></h2><p class="sub" id="shiftSub"></p></div></div>
+        <article class="card tabpanel" id="shiftCard" data-tab="history" role="tabpanel" aria-labelledby="tab-history">
+          <div class="cardhead"><div><h2 data-i18n="shift.title"></h2><p class="sub" id="shiftSub"></p></div></div>
           <div id="thenNow"></div>
           <div class="legend" id="shiftLegend"></div>
           <div class="chart" id="shiftChart"></div>
           <div class="tiles" id="trendTiles"></div>
         </article>
-        <article class="card">
-          <div class="cardhead"><span class="num">05</span><div><h2 data-i18n="heat.title"></h2><p class="sub" data-i18n="heat.sub"></p></div></div>
+        <article class="card tabpanel" id="heatCard" data-tab="history" role="tabpanel" aria-labelledby="tab-history">
+          <div class="cardhead"><div><h2 data-i18n="heat.title"></h2><p class="sub" data-i18n="heat.sub"></p></div></div>
           <div class="legend" id="heatLegend"></div>
           <div class="chart heat" id="heatChart"><canvas id="heat"></canvas></div>
           <details>
@@ -176,8 +223,8 @@
             <button type="button" id="csv" class="ghost" data-i18n="csv"></button>
           </details>
         </article>
-        <article class="card method">
-          <div class="cardhead"><span class="num">06</span><div><h2 data-i18n="method.title"></h2></div></div>
+        <article class="card method tabpanel" id="methodCard" data-tab="method" role="tabpanel" aria-labelledby="tab-method">
+          <div class="cardhead"><div><h2 data-i18n="method.title"></h2></div></div>
           <ul>
             <li data-i18n-html="method.1"></li><li data-i18n-html="method.2"></li><li data-i18n-html="method.3"></li><li data-i18n-html="method.4"></li>
             <li data-i18n-html="method.5"></li><li data-i18n-html="method.6"></li><li data-i18n-html="method.7"></li>
@@ -190,6 +237,6 @@
   <div id="tip" class="tip" hidden></div>
 
   <script src="vendor/leaflet/leaflet.js"></script>
-  <script type="module" src="js/app.js?v=7"></script>
+  <script type="module" src="js/app.js?v=10"></script>
 </body>
 </html>

@@ -25,6 +25,18 @@ npm test
 
 - **Full-screen map picker** with place search, then a recommendation: the
   planting window, a 0–100 risk score, and why plantings fail.
+- **This season and next**: the window for the coming season and the one
+  after it, with calendar dates and a countdown. Next season's dates move by
+  one year of the long-term trend in the window, where that trend is
+  statistically significant; otherwise they stay the same.
+- **My fields**: a home screen with one card per field checked, sorted by the
+  soonest window. Each card shows the countdown, this season's and next
+  season's windows, the risk, and a forecast line when the window is close.
+  Fields can be renamed and removed. Guests' fields stay on the device;
+  signed-in farmers' fields are in their account (a guest's fields move into
+  the account on sign-in).
+- **Field tabs**: Overview, Options, Risk, History, Satellite and How it works.
+  The browser's back button moves between My fields and a field.
 - **Eleven crops**, including autumn-sown winter wheat and rice, in three
   maturity classes, on light, medium or heavy soil, rainfed or irrigated.
 - **16-day forecast** (Open-Meteo): in the two weeks before the window it
@@ -38,8 +50,9 @@ npm test
 - **Editable crop assumptions**, °C/mm or °F/inches, English, Spanish and
   French, a print layout, shareable links, and offline reuse of the last
   fields through a service worker.
-- **Farmer accounts (optional)**: sign in with Google to keep a "My fields"
-  list and carry language and units across devices. Guests lose nothing.
+- **Farmer accounts (optional)**: sign in with Google or with an email and
+  password to keep a "My fields" list and carry language and units across
+  devices. Guests lose nothing.
 - **A validation page** (`validation.html`) that runs the model for 20
   crop-and-region pairs and scores it against published planting calendars.
 
@@ -75,16 +88,29 @@ autumn frost, season heat and rainfall are tested with a Theil–Sen slope and a
 Mann–Kendall significance test, and the 1981–2000 window is compared with the
 last 15 years.
 
-**Satellite check.** On request, the app asks NASA's
+**Satellite check.** As soon as a field is chosen, alongside the weather
+download, the app asks NASA's
 [ORNL DAAC subset service](https://modis.ornl.gov/data/modis_webservice.html)
-for the yearly mid-green-up dates of the pixel under the pin (MCD12Q2, 500 m):
-four small requests cover 15 seasons. Stepping back from green-up by emergence
-plus about 30 days gives a satellite-implied sowing date, which is compared
-with the dates the weather model called safe in that same year (`js/ndvi.js`).
-If that product has nothing for the pixel, the app falls back to dating
-green-up itself from 16-day NDVI (MOD13Q1, 250 m), one slower request per
-season. Autumn-sown crops are excluded: their spring green-up says little
-about the sowing date.
+for the yearly mid-green-up dates of the pixel under the pin (MCD12Q2, 500 m,
+both growing cycles of each year, last 18 years): four small requests, all
+sent at once. Stepping back from green-up by emergence plus about 30 days gives
+a satellite-implied sowing date, which is compared with the dates the weather
+model called safe in that same year (`js/ndvi.js`). Autumn-sown crops are
+excluded: their spring green-up says little about the sowing date.
+
+NASA's service is the slow part, and its speed varies a lot: a request can take
+1–5 seconds on a quiet day and 10–60 seconds on a busy one, after which its
+gateway gives up with an error. Requests sent together come back together, so
+the wait is NASA's queue rather than anything in the app. To keep that off the
+critical path:
+
+- the check starts by itself and never holds up the rest of the page;
+- green-up belongs to the pixel, so a field is fetched once and every crop and
+  setting there reuses it; answers are also kept in the browser;
+- the example fields ship with a saved copy of their NASA data
+  (`data/greenups.json`), so a demo never waits on NASA;
+- a request that fails quickly is retried once; one that fails after a long
+  wait is not, and the farmer gets a "Try again" button instead.
 
 **Forecast.** A 16-day Open-Meteo forecast is turned into go / wait advice by
 `outlook()` in `js/forecast.js`.
@@ -96,17 +122,17 @@ late in the monsoon tropics. The reference periods in
 `js/validation-sites.js` were transcribed from memory of USDA and FAO crop
 calendars and still need checking against the sources.
 
-**Accounts.** `js/account.js` uses Firebase Auth (Google sign-in) and Cloud
-Firestore. Each check a signed-in farmer runs is saved under
+**Accounts.** `js/account.js` uses Firebase Auth (Google sign-in, or email
+and password with account creation and password reset) and Cloud Firestore. Each check a signed-in farmer runs is saved under
 `users/{uid}/runs`, and their language and units under `users/{uid}`. The app
 loads the module on the side, so it never waits on Firebase and keeps working
 if Firebase cannot be reached. First-time visitors see a sign-in screen with a
 "Continue without an account" option; shared links skip it.
 
-To set up the Firebase project: enable the Google provider (Authentication →
-Sign-in method), add the site's domain under Authentication → Settings →
-Authorized domains, and use these Firestore rules so each farmer can only
-reach their own data:
+To set up the Firebase project: enable the **Google** and **Email/Password**
+providers (Authentication → Sign-in method), add the site's domain under
+Authentication → Settings → Authorized domains (needed for Google sign-in),
+and use these Firestore rules so each farmer can only reach their own data:
 
 ```
 rules_version = '2';
@@ -127,7 +153,8 @@ service cloud.firestore {
 | `js/crops.js` | Crop parameters (GDD base and target, frost and heat limits). |
 | `js/power.js` | NASA POWER fetch. |
 | `js/ndvi.js` | Satellite check: green-up dating and comparison with the model. No DOM. |
-| `js/modis.js` | MODIS green-up and NDVI fetch with retry and browser cache. |
+| `js/modis.js` | NASA green-up fetch: all requests at once, time limit, browser cache, saved copy. |
+| `data/greenups.json` | Saved NASA green-up dates for the example fields. |
 | `js/forecast.js` | Open-Meteo forecast and the plant-now-or-wait rules. |
 | `js/i18n.js` | Interface text in English, Spanish and French. |
 | `js/account.js` | Firebase sign-in and saved fields. |

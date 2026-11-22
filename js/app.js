@@ -1,12 +1,12 @@
 // Bump ?v= here and in index.html whenever these files change, so browsers
 // never pair a new page with stale cached scripts or styles.
-import { CROPS, MATURITY } from './crops.js?v=7';
-import { fetchDaily } from './power.js?v=7';
-import { ndviTargets, compareNdvi, assignGreenups, TOLERANCE } from './ndvi.js?v=7';
-import { fetchNdvi, fetchGreenups } from './modis.js?v=7';
-import { fetchForecast, outlook } from './forecast.js?v=7';
-import { parsePower, analyze, riskBand, looksLikeWater, SOILS, OUT, SEASON_DAYS } from './analysis.js?v=7';
-import { LANGS, t, setLang, getLang, locale, applyStatic } from './i18n.js?v=7';
+import { CROPS, MATURITY } from './crops.js?v=10';
+import { fetchDaily } from './power.js?v=10';
+import { ndviTargets, compareNdvi, assignGreenups, TOLERANCE } from './ndvi.js?v=10';
+import { fetchGreenups, pixelKey } from './modis.js?v=10';
+import { fetchForecast, outlook } from './forecast.js?v=10';
+import { parsePower, analyze, riskBand, looksLikeWater, SOILS, OUT, SEASON_DAYS } from './analysis.js?v=10';
+import { LANGS, t, setLang, getLang, locale, applyStatic } from './i18n.js?v=10';
 
 const $ = (id) => document.getElementById(id);
 const DAY = 86400000;
@@ -49,6 +49,7 @@ function refreshText() {
   buildChips();
   buildAssume();
   renderAccount();
+  renderEmailForm();
   if (current) render();
 }
 
@@ -187,11 +188,13 @@ async function run() {
   const lat = +$('lat').value, lon = +$('lon').value;
   if (!Number.isFinite(lat) || !Number.isFinite(lon) || Math.abs(lat) > 90) return;
   const id = ++runId;
-  ndviRun++;
-  ndviAbort?.abort();
+  startSatellite(lat, lon);   // runs alongside the weather download
   const maturity = $('maturity').value, irrigated = $('irrigated').checked, soil = $('soil').value;
   const key = cropKey;
   const hash = `#${lat.toFixed(4)},${lon.toFixed(4)},${key},${maturity},${irrigated ? 1 : 0},${soil}`;
+  const newPlace = !current || current.lat !== lat || current.lon !== lon;
+  if (view !== 'field') showView('field');
+  expectedHash = hash;
   location.hash = hash;
   ls.set('seedline:last', location.hash);
   $('go').disabled = true;
@@ -211,12 +214,13 @@ async function run() {
     const opts = { irrigated, gddScale: MATURITY[maturity].scale, soilCapacity: SOILS[soil] };
     const result = analyze(series, crop, lat, opts);
     current = { series, result, crop, cropKey: key, lat, lon, irrigated, maturity, soil, opts, hash };
-    saveToAccount(current);
+    rememberField(current);
     // Unhide first: the charts measure their containers to size themselves.
     $('status').hidden = true;
     $('output').hidden = false;
     $('offlineNote').hidden = navigator.onLine !== false;
     render();
+    if (newPlace && tab !== 'overview') showTab('overview');
     loadForecast(current);
     setTimeout(() => computeAlternatives(current), 60);
   } catch (e) {
@@ -236,11 +240,11 @@ function render() {
   renderShift();
   renderHeat();
   renderTable();
-  if (current.ndvi) renderNdvi(); else resetNdvi();
+  renderNdvi();
   renderSatStrip();
   renderForecast();
   renderAlternatives();
-  renderMyFields();
+  renderHomeBits();
 }
 let resizeTimer;
 addEventListener('resize', () => { clearTimeout(resizeTimer); resizeTimer = setTimeout(() => current && render(), 150); });
@@ -324,7 +328,7 @@ function renderRec() {
   if (!rec || !rec.viable) {
     const why = rec ? topReasons(rec.reasons, 2) : [];
     const dry = why.some((w) => w.key === 'dry' || w.key === 'drought');
-    el.className = 'card rec nogo';
+    el.classList.add('nogo');   // classList, so the tab classes survive
     el.innerHTML = `
       <div class="eyebrow">${where}</div>
       <div class="headline">${icon}${esc(t('nogo.title', { crop: cropName(key) }))}</div>
@@ -338,14 +342,17 @@ function renderRec() {
   const band = riskBand(rec.risk);
   const why = topReasons(rec.reasons);
   const n = rec.now;
+  // Count from today, not from the last day of weather on record (a few days behind).
+  const openMs = rec.seasonStartMs + rec.open * DAY, closeMs = rec.seasonStartMs + rec.close * DAY, today = startOfToday();
+  const openNow = today >= openMs && today <= closeMs;
   let timing;
-  if (rec.inWindowNow) {
+  if (openNow) {
     const ready = n.warmEnough && n.moistEnough;
     timing = `<b>${t('now.open')}</b> ${t(ready ? 'now.ready' : 'now.hold')}: ${t('now.temp', { t: fT(n.tmean7), g: fThr(crop.germ) })}${irrigated ? '' : `; ${t('now.soil', { p: pct(n.soilWater), n: pct(crop.dryStart ?? 0.2) })}`}.`;
   } else {
-    timing = `${t('now.opens', { n: rec.daysToOpen })} ${t('now.latest', { date: fmtDate(n.dateMs), t: fT(n.tmean7), r: fR(n.rain14) })}`;
+    timing = `${today < openMs ? `${t('now.opens', { n: Math.round((openMs - today) / DAY) })} ` : ''}${t('now.latest', { date: fmtDate(n.dateMs), t: fT(n.tmean7), r: fR(n.rain14) })}`;
   }
-  el.className = 'card rec';
+  el.classList.remove('nogo');
   el.innerHTML = `
     <div class="rechead">
       <div>
@@ -356,6 +363,7 @@ function renderRec() {
       </div>
       <div class="gaugebox">${gaugeSvg(rec.risk, band)}<div class="band"><i class="${band.key}"></i>${t(`band.${band.key}`)}</div><div class="gaugecap">${t('gauge.cap')}</div></div>
     </div>
+    ${seasonsHtml(rec)}
     ${ribbonHtml(rec)}
     <div id="satStrip" class="satstrip"></div>
     <div id="outlook" class="outlook"></div>
@@ -449,6 +457,7 @@ $('altCard').addEventListener('click', (e) => {
   if (b.dataset.mat) $('maturity').value = b.dataset.mat;
   if (b.dataset.altcrop) setCrop(b.dataset.altcrop);
   animateNext = true;
+  showTab('overview');
   run();
   scrollTo({ top: 0, behavior: reduceMotion ? 'auto' : 'smooth' });
 });
@@ -662,20 +671,37 @@ function renderHeat() {
 }
 
 // ---------------------------------------------------------- satellite check
+// Green-up dates belong to the pixel, not the crop, so they are fetched once per
+// field, starting the moment a field is chosen (alongside the weather), and
+// every crop and setting at that field reuses them. NASA's service can take up
+// to a minute when it is busy; by starting early the answer is usually ready by
+// the time anyone looks, and the rest of the page never waits for it.
 
-let ndviRun = 0;
-let ndviAbort = null;
+let sat = { key: null, status: 'idle', data: null, ctrl: null };
+
+function startSatellite(lat, lon) {
+  const key = pixelKey(lat, lon);
+  if (sat.key === key && (sat.status === 'loading' || sat.status === 'ok')) return;
+  sat.ctrl?.abort();   // free the browser's connections for the new field
+  const ctrl = new AbortController();
+  const mine = { key, status: 'loading', data: null, ctrl };
+  sat = mine;
+  fetchGreenups(lat, lon, { signal: ctrl.signal })
+    .then((data) => { mine.status = 'ok'; mine.data = data; })
+    .catch((e) => { if (!ctrl.signal.aborted) { mine.status = 'failed'; console.warn('Seedline: satellite check failed.', e); } })
+    .finally(() => { if (sat === mine && current && pixelKey(current.lat, current.lon) === key) { renderNdvi(); renderSatStrip(); } });
+}
 
 const satSupported = () => !current.crop.winter && ndviTargets(current.result).length > 0;
 
-function resetNdvi() {
-  const n = satSupported();
-  $('ndviLegend').innerHTML = ''; $('ndviChart').innerHTML = ''; $('ndviNote').hidden = true;
-  $('ndviBody').innerHTML = n
-    ? `<div class="ndvistart"><button type="button" id="ndviGo" class="primary">${t('sat.start')}</button><span class="hint">${t('sat.start.d')}</span></div>`
-    : `<p class="sub">${t(current.crop.winter ? 'sat.winter' : 'sat.none')}</p>`;
-  $('ndviGo')?.addEventListener('click', runNdvi);
+/** Where the satellite check stands for the field and crop on screen. */
+function satView() {
+  if (!satSupported()) return { status: 'unsupported' };
+  if (sat.key !== pixelKey(current.lat, current.lon)) startSatellite(current.lat, current.lon);
+  if (sat.status !== 'ok') return { status: sat.status };
+  return { status: 'ok', data: sat.data, cmp: compareNdvi(current.result, current.crop, assignGreenups(current.result, sat.data.greens)) };
 }
+function retrySatellite() { if (current) { startSatellite(current.lat, current.lon); renderNdvi(); renderSatStrip(); } }
 
 const SAT_ICON = '<svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true"><g transform="rotate(-35 12 12)" fill="currentColor"><rect x="9" y="9" width="6" height="6" rx="1"/><rect x="1.500" y="10" width="6" height="4" rx=".5"/><rect x="16.500" y="10" width="6" height="4" rx=".5"/></g></svg>';
 const verdictText = (s) => t(`v.${s.verdict}.d`, { inside: s.inside, judged: s.judged, greened: s.greened, checked: s.checked, n: Math.abs(Math.round(s.offset)) });
@@ -684,83 +710,51 @@ const verdictText = (s) => t(`v.${s.verdict}.d`, { inside: s.inside, judged: s.j
 function renderSatStrip() {
   const el = $('satStrip');
   if (!el) return;
-  if (!satSupported()) { el.hidden = true; return; }
+  const v = satView();
+  if (v.status === 'unsupported') { el.hidden = true; return; }
   el.hidden = false;
-  const nd = current.ndvi;
-  const more = `<button type="button" class="ghost" data-sat="more">${t('sat.more')}</button>`;
-  let cls = 'idle', html;
-  if (!nd) html = `<div><b>${t('sat.idle')}</b> ${t('sat.idle.d')}</div><button type="button" class="primary" data-sat="go">${t('sat.run')}</button>`;
-  else if (!nd.state.finished) {
-    cls = 'busy';
-    html = `<div><b>${t('sat.busy')}</b> ${t('sat.busy.d', { done: nd.state.done, total: nd.state.total })}<div class="progress wide"><span style="width:${(nd.state.done / Math.max(1, nd.state.total)) * 100}%;animation:none"></span></div></div>${more}`;
-  } else if (nd.state.failedAll) html = `<div><b>${t('sat.unavail')}</b> ${t('sat.unavail.d')}</div><button type="button" class="primary" data-sat="go">${t('sat.retry')}</button>`;
-  else {
-    const s = nd.cmp.summary;
+  let cls = v.status, html;
+  if (v.status === 'ok') {
+    const s = v.cmp.summary;
     cls = s.verdict;
-    html = `<div><b>${t(`v.${s.verdict}`)}.</b> ${esc(verdictText(s))}</div>${more}`;
+    html = `<div><b>${t(`v.${s.verdict}`)}.</b> ${esc(verdictText(s))}</div><button type="button" class="ghost" data-sat="more">${t('sat.more')}</button>`;
+  } else if (v.status === 'failed') {
+    html = `<div><b>${t('sat.unavail')}</b> ${t('sat.unavail.d')}</div><button type="button" class="primary" data-sat="retry">${t('sat.retry')}</button>`;
+  } else {
+    cls = 'busy';
+    html = `<div><b>${t('sat.busy')}</b> ${t('sat.busy.d')}<div class="progress wide"><span></span></div></div>`;
   }
   el.className = `satstrip ${cls}`;
   el.innerHTML = `<span class="saticon">${SAT_ICON}</span>${html}`;
-  el.querySelector('[data-sat=go]')?.addEventListener('click', runNdvi);
-  el.querySelector('[data-sat=more]')?.addEventListener('click', () => $('ndviCard').scrollIntoView({ behavior: reduceMotion ? 'auto' : 'smooth', block: 'start' }));
+  el.querySelector('[data-sat=retry]')?.addEventListener('click', retrySatellite);
+  el.querySelector('[data-sat=more]')?.addEventListener('click', () => openTab('satellite'));
 
   const ribbon = $('rec').querySelector('.ribbon');
   ribbon?.querySelector('.mark.green')?.remove();
-  const g = nd?.cmp.summary.medianGreen;
+  const g = v.cmp?.summary.medianGreen;
   if (ribbon && Number.isFinite(g)) ribbon.insertAdjacentHTML('beforeend', `<div class="mark green" style="left:${((((g % 365) + 365) % 365) / 365) * 100}%"><b>${t('mark.green')}</b></div>`);
 }
 
-async function runNdvi() {
-  const id = ++ndviRun;
-  const run = current;
-  const { result, crop, lat, lon } = run;
-  const ctrl = new AbortController();
-  ndviAbort = ctrl;
-  const state = { done: 0, total: 4, finished: false, failedAll: false, source: 'fast', failed: 0 };
-  let observed = [];
-  const update = () => {
-    if (id !== ndviRun) return;
-    run.ndvi = { cmp: compareNdvi(result, crop, observed), state };
-    if (run === current) { renderNdvi(); renderSatStrip(); }
-  };
-  update();
-
-  // Fast path: NASA's yearly green-up record, four small requests.
-  const targets = ndviTargets(result);
-  const years = targets.map((x) => x.year);
-  let fastOk = false;
-  try {
-    const greens = await fetchGreenups(lat, lon, Math.max(2001, Math.min(...years) - 1), Math.max(...years) + 1, ctrl.signal, (done, total) => { state.done = done; state.total = total; update(); });
-    observed = assignGreenups(result, greens);
-    fastOk = observed.some((o) => Number.isFinite(o.greenMs));
-  } catch { /* fall through to the slow path */ }
-  if (id !== ndviRun) return;
-
-  // Fallback: read raw NDVI season by season (slow, one request per season).
-  if (!fastOk) {
-    state.source = 'slow'; state.done = 0; state.total = targets.length; observed = [];
-    update();
-    const queue = [...targets];
-    await Promise.all([0, 1].map(async () => {
-      for (let q; id === ndviRun && (q = queue.shift());) {
-        try { observed.push({ year: q.year, points: await fetchNdvi(lat, lon, q.dates, ctrl.signal) }); } catch { state.failed++; }
-        state.done++;
-        update();
-      }
-    }));
-    state.failedAll = state.failed === targets.length;
-  }
-  state.finished = true;
-  update();
-}
-
 function renderNdvi() {
-  const { cmp, state } = current.ndvi;
+  const v = satView();
+  const host = $('ndviChart');
+  const clearChart = () => { host.innerHTML = ''; $('ndviLegend').innerHTML = ''; $('ndviNote').hidden = true; };
+  if (v.status === 'unsupported') {
+    clearChart();
+    $('ndviBody').innerHTML = `<p class="sub">${t(current.crop.winter ? 'sat.winter' : 'sat.none')}</p>`;
+    return;
+  }
+  if (v.status !== 'ok') {
+    clearChart();
+    $('ndviBody').innerHTML = v.status === 'failed'
+      ? `<p class="sub">${t('sat.unavail')} ${t('sat.unavail.d')} <button type="button" id="ndviGo" class="ghost">${t('sat.retry')}</button></p>`
+      : `<div class="ndviprog"><div class="progress wide"><span></span></div><span class="hint">${t('sat.busy.d')}</span></div>`;
+    $('ndviGo')?.addEventListener('click', retrySatellite);
+    return;
+  }
+  const { cmp, data } = v;
   const s = cmp.summary;
-  let html = '';
-  if (!state.finished) html += `<div class="ndviprog"><div class="progress wide"><span style="width:${(state.done / Math.max(1, state.total)) * 100}%;animation:none"></span></div><span class="hint">${t('sat.busy.d', { done: state.done, total: state.total })}</span></div>${state.source === 'slow' ? `<p class="hint">${t('sat.fallback')}</p>` : ''}`;
-  if (state.finished && state.failedAll) html += `<p class="sub">${t('sat.unavail')} ${t('sat.unavail.d')} <button type="button" id="ndviGo" class="ghost">${t('sat.retry')}</button></p>`;
-  else if (state.finished || s.verdict !== 'pending') html += `<div class="verdict ${s.verdict}"><b>${t(`v.${s.verdict}`)}.</b> ${esc(verdictText(s))}</div>`;
+  let html = `<div class="verdict ${s.verdict}"><b>${t(`v.${s.verdict}`)}.</b> ${esc(verdictText(s))}</div>`;
   if (s.greened) {
     const off = Math.round(s.offset);
     const strength = !Number.isFinite(s.rho) ? null : s.rho >= 0.5 ? 'strong' : s.rho >= 0.25 ? 'moderate' : s.rho > -0.25 ? 'weak' : 'opposite';
@@ -768,15 +762,13 @@ function renderNdvi() {
       <div class="tile"><div class="k">${t('st.green.k')}</div><div class="v">${esc(lab(Math.round(s.medianGreen)))}</div><div class="d">${t('st.green.d')}</div></div>
       <div class="tile"><div class="k">${t('st.implied.k')}</div><div class="v">${esc(lab(Math.round(s.medianImplied)))}</div><div class="d">${Math.abs(off) < 2 ? t('st.implied.on') : t(off < 0 ? 'st.implied.before' : 'st.implied.after', { n: Math.abs(off) })}</div></div>
       ${strength ? `<div class="tile"><div class="k">${t('st.rho.k')}</div><div class="v">${t(`rho.${strength}`)}</div><div class="d">${t('st.rho.d', { r: s.rho.toFixed(2) })}</div></div>` : ''}
-      ${Number.isFinite(s.medianPeak) ? `<div class="tile"><div class="k">${t('st.peak.k')}</div><div class="v">${s.medianPeak.toFixed(2)}</div><div class="d">${t('st.peak.d')}</div></div>` : `<div class="tile"><div class="k">${t('st.n.k')}</div><div class="v">${s.greened} / ${s.checked}</div><div class="d">${t('st.n.d')}</div></div>`}
+      <div class="tile"><div class="k">${t('st.n.k')}</div><div class="v">${s.greened} / ${s.checked}</div><div class="d">${t('st.n.d')}</div></div>
     </div>`;
   }
   $('ndviBody').innerHTML = html;
-  $('ndviGo')?.addEventListener('click', runNdvi);
   $('ndviNote').hidden = !s.greened;
-  $('ndviNote').textContent = `${t('sat.note', { lag: s.lag, tol: TOLERANCE })} ${t(state.source === 'fast' ? 'sat.src.fast' : 'sat.src.slow')}`;
+  $('ndviNote').textContent = `${t('sat.note', { lag: s.lag, tol: TOLERANCE })} ${data.source === 'saved' ? t('sat.src.saved', { date: fmtDate(Date.parse(data.fetched), { year: 'numeric', month: 'short', day: 'numeric' }) }) : t('sat.src.fast')}`;
 
-  const host = $('ndviChart');
   const rows = cmp.years;
   if (!s.greened || rows.length < 2) { host.innerHTML = ''; $('ndviLegend').innerHTML = ''; return; }
   $('ndviLegend').innerHTML = `<span><i class="sw" style="background:var(--window)"></i>${t('sat.leg.safe')}</span><span><i class="sw dot" style="background:var(--o-short)"></i>${t('sat.leg.in')}</span><span><i class="sw dot ring"></i>${t('sat.leg.out')}</span>`;
@@ -833,62 +825,57 @@ $('csv').addEventListener('click', () => {
 });
 
 // ----------------------------------------------------------------- accounts
-// Optional Google sign-in. The module is loaded on the side so the app never
-// waits for it, and guests (or anyone offline) are unaffected if it fails.
+// Optional sign-in, with Google or with an email and password. The module is
+// loaded on the side so the app never waits for it, and guests (or anyone
+// offline) are unaffected if it fails.
 
 let account = null;   // the loaded account module, once Firebase is reachable
 let user = null;
 let myRuns = [];
 let authKnown = false;
 
+let emailMode = 'signin';   // the email form: 'signin' or 'create'
+
 function showSignin(on) {
   $('signin').hidden = !on;
   document.body.classList.toggle('signing-in', on);
-  if (on) { $('authMsg').hidden = true; (account ? $('googleBtn') : $('guestBtn')).focus(); }
+  if (on) {
+    authMessage(null);
+    emailMode = 'signin';
+    $('authPass').value = '';
+    $('authPass').type = 'password';
+    for (const id of ['authEmail', 'authPass']) $(id).removeAttribute('aria-invalid');
+    renderEmailForm();
+    (account ? $('googleBtn') : $('guestBtn')).focus();
+  }
+}
+
+/** One message line on the sign-in screen, for errors and for good news. */
+function authMessage(key, vars, kind = 'error') {
+  const el = $('authMsg');
+  el.hidden = !key;
+  if (!key) return;
+  el.className = `authmsg ${kind}`;
+  el.textContent = t(key, vars);
 }
 
 function renderAccount() {
   if (!account) { $('acct').hidden = $('pickAcct').hidden = true; return; }
-  const name = user ? (user.displayName || user.email || '').trim() : '';
+  // Email accounts may have no name: fall back to the part of the email before the @.
+  const name = user ? (user.displayName || '').trim() || (user.email || '').split('@')[0] : '';
+  const full = user ? (user.displayName || '').trim() || user.email || '' : '';
   const first = name.split(/\s+/)[0] || '';
   const avatar = !user ? '' : user.photoURL
     ? `<img src="${esc(user.photoURL)}" alt="" referrerpolicy="no-referrer">`
     : `<span class="initial">${esc(first.slice(0, 1).toUpperCase() || '?')}</span>`;
   $('acct').innerHTML = user
-    ? `<span class="who" title="${esc(t('auth.as', { name }))}">${avatar}<b>${esc(first)}</b></span><button type="button" class="acctbtn" data-acct="out">${t('auth.signout')}</button>`
+    ? `<span class="who" title="${esc(t('auth.as', { name: full }))}">${avatar}<b>${esc(first)}</b></span><button type="button" class="acctbtn" data-acct="out">${t('auth.signout')}</button>`
     : `<button type="button" class="acctbtn" data-acct="in">${t('auth.signin')}</button>`;
   $('pickAcct').innerHTML = user
     ? `<span class="who">${avatar}<span>${esc(t('auth.as', { name: first }))}</span></span><button type="button" class="linkbtn" data-acct="out">${t('auth.signout')}</button>`
     : `<button type="button" class="ghost" data-acct="in">${t('auth.pickhint')}</button>`;
   $('acct').hidden = $('pickAcct').hidden = !authKnown;
-  renderMyFields();
-}
-
-function renderMyFields() {
-  const el = $('myFields');
-  const seen = new Set();
-  const list = user ? myRuns.filter((r) => r.hash && !seen.has(r.hash) && seen.add(r.hash)).slice(0, 6) : [];
-  el.hidden = !list.length;
-  if (!list.length) { el.innerHTML = ''; return; }
-  el.innerHTML = `<h3>${t('auth.myfields')}</h3>${list.map((r) => {
-    const win = r.viable && r.openMs ? `${esc(fmtDate(r.openMs))} – ${esc(fmtDate(r.closeMs))}` : t('alt.none');
-    return `<button type="button" class="myfield" data-hash="${esc(r.hash)}"><span class="mfcrop"><span aria-hidden="true">${ICON[r.crop] ?? '🌱'}</span> ${esc(CROPS[r.crop] ? cropName(r.crop) : r.crop)}</span><span class="mfwhere">${(+r.lat).toFixed(2)}°, ${(+r.lon).toFixed(2)}°</span><span class="mfwin">${win}</span></button>`;
-  }).join('')}`;
-}
-
-function saveToAccount(r) {
-  if (!account || !user) return;
-  if (myRuns[0]?.hash === r.hash) return;   // same field and settings as last time
-  const rec = r.result.rec, ok = !!rec?.viable;
-  // Firestore rejects undefined, so every field has a value.
-  const entry = {
-    hash: r.hash, lat: +r.lat.toFixed(4), lon: +r.lon.toFixed(4), crop: r.cropKey, maturity: r.maturity,
-    irrigated: r.irrigated, soil: r.soil, viable: ok, risk: ok ? rec.risk : null,
-    openMs: ok ? rec.seasonStartMs + rec.open * DAY : null, closeMs: ok ? rec.seasonStartMs + rec.close * DAY : null,
-  };
-  myRuns = [entry, ...myRuns.filter((x) => x.hash !== entry.hash)].slice(0, 20);
-  renderMyFields();
-  account.saveRun(entry).catch((e) => console.warn('Seedline: could not save this field to your account.', e));
+  renderHomeBits();
 }
 
 function syncProfile() {
@@ -902,7 +889,26 @@ function applyProfile(p) {
   if (changed) refreshText();
 }
 
-const AUTH_ERR = { 'auth/popup-blocked': 'auth.err.popup', 'auth/unauthorized-domain': 'auth.err.domain', 'auth/network-request-failed': 'auth.err.network', 'auth/operation-not-allowed': 'auth.err.domain' };
+const AUTH_ERR = {
+  'auth/popup-blocked': 'auth.err.popup',
+  'auth/unauthorized-domain': 'auth.err.domain',
+  'auth/operation-not-allowed': 'auth.err.provider',
+  'auth/network-request-failed': 'auth.err.network',
+  'auth/invalid-email': 'auth.err.email',
+  'auth/missing-email': 'auth.err.noemail',
+  'auth/missing-password': 'auth.err.nopass',
+  'auth/weak-password': 'auth.err.weak',
+  'auth/password-does-not-meet-requirements': 'auth.err.weak',
+  'auth/email-already-in-use': 'auth.err.exists',
+  // With Firebase's email-enumeration protection a wrong password and an
+  // unknown email look the same, so they share one message.
+  'auth/invalid-credential': 'auth.err.wrong',
+  'auth/invalid-login-credentials': 'auth.err.wrong',
+  'auth/wrong-password': 'auth.err.wrong',
+  'auth/user-not-found': 'auth.err.wrong',
+  'auth/too-many-requests': 'auth.err.many',
+  'auth/user-disabled': 'auth.err.disabled',
+};
 async function doSignIn() {
   if (!account) return;
   $('googleBtn').disabled = true;
@@ -911,14 +917,114 @@ async function doSignIn() {
     showSignin(false);
   } catch (e) {
     if (e?.code !== 'auth/popup-closed-by-user' && e?.code !== 'auth/cancelled-popup-request') {
-      $('authMsg').hidden = false;
-      $('authMsg').textContent = t(AUTH_ERR[e?.code] ?? 'auth.err.other');
+      authMessage(AUTH_ERR[e?.code] ?? 'auth.err.other');
       console.warn('Seedline: sign-in failed.', e);
     }
   } finally {
     $('googleBtn').disabled = false;
   }
 }
+
+// ---- email and password
+
+function renderEmailForm() {
+  const create = emailMode === 'create';
+  $('nameRow').hidden = !create;
+  $('pwHint').hidden = !create;
+  $('authPass').setAttribute('autocomplete', create ? 'new-password' : 'current-password');
+  $('emailSubmit').textContent = t(create ? 'auth.f.create' : 'auth.f.signin');
+  $('modeToggle').textContent = t(create ? 'auth.f.toSignin' : 'auth.f.toCreate');
+  $('forgotBtn').hidden = create;
+  const shown = $('authPass').type === 'text';
+  $('pwToggle').textContent = t(shown ? 'auth.f.hide' : 'auth.f.show');
+  $('pwToggle').setAttribute('aria-pressed', String(shown));
+}
+
+function openEmailForm() {
+  $('emailForm').hidden = false;
+  $('emailOpen').hidden = true;
+  $('emailOpen').setAttribute('aria-expanded', 'true');
+  $('signin').querySelector('.signincard').classList.add('emailing');
+  renderEmailForm();
+  $('authEmail').focus();
+}
+
+/** Point at the field that needs fixing, with a message. */
+function fieldProblem(id, key) {
+  authMessage(key);
+  $(id).setAttribute('aria-invalid', 'true');
+  $(id).focus();
+}
+
+async function doEmailAuth(e) {
+  e.preventDefault();
+  if (!account) return;
+  const create = emailMode === 'create';
+  const email = $('authEmail').value.trim(), password = $('authPass').value, name = $('authName').value;
+  for (const id of ['authEmail', 'authPass']) $(id).removeAttribute('aria-invalid');
+  if (!email) return fieldProblem('authEmail', 'auth.err.noemail');
+  if (!password) return fieldProblem('authPass', 'auth.err.nopass');
+  if (create && password.length < 6) return fieldProblem('authPass', 'auth.err.weak');
+  authMessage(null);
+  $('emailSubmit').disabled = true;
+  try {
+    if (create) {
+      await account.createAccount(email, password, name);
+      renderAccount();   // the name is saved just after the account appears
+    } else {
+      await account.signInWithEmail(email, password);
+    }
+    $('authPass').value = '';
+    showSignin(false);
+  } catch (err) {
+    const key = AUTH_ERR[err?.code] ?? 'auth.err.other';
+    if (err?.code === 'auth/email-already-in-use') { emailMode = 'signin'; renderEmailForm(); }
+    if (key === 'auth.err.email') fieldProblem('authEmail', key);
+    else if (key === 'auth.err.wrong' || key === 'auth.err.weak') fieldProblem('authPass', key);
+    else authMessage(key);
+    console.warn('Seedline: email sign-in failed.', err);
+  } finally {
+    $('emailSubmit').disabled = !account;
+  }
+}
+
+async function doPasswordReset() {
+  if (!account) return;
+  const email = $('authEmail').value.trim();
+  if (!email) return fieldProblem('authEmail', 'auth.reset.need');
+  $('forgotBtn').disabled = true;
+  try {
+    await account.resetPassword(email, getLang());
+    authMessage('auth.reset.sent', { email }, 'ok');
+  } catch (err) {
+    if ((AUTH_ERR[err?.code] ?? '') === 'auth.err.email') fieldProblem('authEmail', 'auth.err.email');
+    else authMessage(AUTH_ERR[err?.code] ?? 'auth.err.other');
+    console.warn('Seedline: password reset failed.', err);
+  } finally {
+    $('forgotBtn').disabled = false;
+  }
+}
+
+$('emailOpen').addEventListener('click', openEmailForm);
+$('emailForm').addEventListener('submit', doEmailAuth);
+// Editing a field that was flagged clears the flag and its error message.
+$('emailForm').addEventListener('input', (e) => {
+  if (e.target.getAttribute('aria-invalid') !== 'true') return;
+  e.target.removeAttribute('aria-invalid');
+  if ($('authMsg').classList.contains('error')) authMessage(null);
+});
+$('forgotBtn').addEventListener('click', doPasswordReset);
+$('modeToggle').addEventListener('click', () => {
+  emailMode = emailMode === 'create' ? 'signin' : 'create';
+  authMessage(null);
+  renderEmailForm();
+  $(emailMode === 'create' ? 'authName' : 'authEmail').focus();
+});
+$('pwToggle').addEventListener('click', () => {
+  $('authPass').type = $('authPass').type === 'password' ? 'text' : 'password';
+  renderEmailForm();
+  $('authPass').focus();
+});
 
 $('googleBtn').addEventListener('click', doSignIn);
 $('guestBtn').addEventListener('click', () => { ls.set('seedline:guest', '1'); showSignin(false); });
@@ -927,8 +1033,9 @@ document.addEventListener('click', (e) => {
   const act = e.target.closest('[data-acct]')?.dataset.acct;
   if (act === 'in') showSignin(true);
   if (act === 'out') account?.signOutUser().catch(() => {});
-  const field = e.target.closest('.myfield');
-  if (field) applyHash(field.dataset.hash);
+  const nav = e.target.closest('[data-nav]')?.dataset.nav;
+  if (nav === 'home') goHome();
+  if (nav === 'new') newField();
 });
 
 // First-time visitors meet the sign-in screen straight away (no flash of the
@@ -937,9 +1044,10 @@ document.addEventListener('click', (e) => {
 const arrivedWithLink = /^#-?\d/.test(location.hash);
 if (!arrivedWithLink && !ls.get('seedline:guest') && !ls.get('seedline:signedin')) showSignin(true);
 
-import('./account.js?v=7').then((mod) => {
+import('./account.js?v=10').then((mod) => {
   account = mod;
   $('googleBtn').disabled = false;
+  $('emailSubmit').disabled = false;
   account.onUser(async (u) => {
     user = u;
     authKnown = true;
@@ -950,10 +1058,13 @@ import('./account.js?v=7').then((mod) => {
       renderAccount();
       try { applyProfile(await account.loadProfile()); } catch (e) { console.warn('Seedline: could not load settings.', e); }
       try { myRuns = await account.recentRuns(); } catch (e) { console.warn('Seedline: could not load your fields.', e); myRuns = []; }
-      if (current && user) saveToAccount(current);   // a field checked before sign-in finished
+      runsLoaded = true;
+      if (user && localFields().length) await bringLocalFieldsToAccount();
+      if (current && user) rememberField(current);   // a field checked before sign-in finished
     } else {
       ls.del('seedline:signedin');
       myRuns = [];
+      runsLoaded = false;
     }
     renderAccount();
   });
@@ -963,11 +1074,301 @@ import('./account.js?v=7').then((mod) => {
   showSignin(false);
 });
 
+// ------------------------------------------------------------------ screens
+// Under the header there are two screens: My fields (home) and a field's
+// results, which are split into tabs. The full-screen map and the sign-in
+// screen sit on top. The address carries the screen, so the phone's back
+// button works: '#fields' is My fields, '#<lat>,<lon>,…' is a field.
+
+let view = 'field';
+let expectedHash = null;   // the address run() just set, so its echo is ignored
+
+function showView(v) {
+  const was = view;
+  view = v;
+  delete document.documentElement.dataset.start;
+  $('homeView').hidden = v !== 'home';
+  $('fieldView').hidden = v !== 'field';
+  for (const b of document.querySelectorAll('.mainnav [data-nav=home]')) b.setAttribute('aria-current', v === 'home' ? 'page' : 'false');
+  if (v === 'home') { renderHome(); scrollTo(0, 0); }
+  else if (was !== 'field') { scrollTo(0, 0); if (current) render(); }   // charts measure their containers: draw once visible
+}
+
+function goHome() {
+  setPicking(false);
+  if (location.hash !== '#fields') location.hash = '#fields';
+  else showView('home');
+}
+function newField() { setPicking(true); }
+
+/** Where to land with no field in the address: My fields if there are any, else the map. */
+function goStart() {
+  if (fieldList().length || ls.get('seedline:signedin')) { setPicking(false); showView('home'); }
+  else { showView('field'); setPicking(true); }
+}
+
+addEventListener('hashchange', () => {
+  const h = location.hash;
+  if (h === '#fields') { setPicking(false); showView('home'); return; }
+  if (current && h === current.hash) { setPicking(false); showView('field'); return; }
+  if (h === expectedHash) return;
+  if (!applyHash(h)) goStart();
+});
+
+// ---- tabs
+const TABS = ['overview', 'options', 'risk', 'history', 'satellite', 'method'];
+let tab = 'overview';
+
+function showTab(name, { focus = false } = {}) {
+  tab = name;
+  const bar = $('tabs');
+  for (const b of bar.querySelectorAll('[role=tab]')) {
+    const on = b.dataset.tab === name;
+    b.setAttribute('aria-selected', String(on));
+    b.tabIndex = on ? 0 : -1;
+    if (!on) continue;
+    if (focus) b.focus();
+    // Keep the chosen tab in view when the bar scrolls sideways on a phone.
+    if (b.offsetLeft < bar.scrollLeft || b.offsetLeft + b.offsetWidth > bar.scrollLeft + bar.clientWidth) bar.scrollLeft = b.offsetLeft - 16;
+  }
+  for (const p of document.querySelectorAll('.tabpanel')) p.classList.toggle('active', p.dataset.tab === name);
+  if (current) renderTab(name);
+}
+/** Charts measure their container, so a tab's charts are drawn when it is shown. */
+function renderTab(name) {
+  if (name === 'risk') renderRisk();
+  else if (name === 'history') { renderShift(); renderHeat(); }
+  else if (name === 'satellite') renderNdvi();
+}
+function openTab(name) {
+  showTab(name);
+  const top = $('tabs').getBoundingClientRect().top + scrollY - 8;
+  if (scrollY > top) scrollTo({ top, behavior: reduceMotion ? 'auto' : 'smooth' });
+}
+$('tabs').addEventListener('click', (e) => { const b = e.target.closest('[role=tab]'); if (b) showTab(b.dataset.tab); });
+$('tabs').addEventListener('keydown', (e) => {
+  const to = { ArrowRight: TABS.indexOf(tab) + 1, ArrowLeft: TABS.indexOf(tab) - 1, Home: 0, End: TABS.length - 1 }[e.key];
+  if (to === undefined) return;
+  e.preventDefault();
+  showTab(TABS[(to + TABS.length) % TABS.length], { focus: true });
+});
+
+// ---- dates shared by the field and My fields screens
+const addYear = (ms) => { const d = new Date(ms); return Date.UTC(d.getUTCFullYear() + 1, d.getUTCMonth(), d.getUTCDate()); };
+const startOfToday = () => { const n = Date.now(); return n - (n % DAY); };
+
+function rangeText(a, b) {
+  const y = { month: 'short', day: 'numeric', year: 'numeric' };
+  return new Date(a).getUTCFullYear() === new Date(b).getUTCFullYear() ? `${fmtDate(a)} – ${fmtDate(b, y)}` : `${fmtDate(a, y)} – ${fmtDate(b, y)}`;
+}
+/** "Opens in 12 days", "Open now · closes in 5 days", … counted from today. */
+function countdownText(openMs, closeMs) {
+  const today = startOfToday();
+  const days = Math.round((openMs - today) / DAY), left = Math.round((closeMs - today) / DAY);
+  if (days > 1) return t('plan.opensIn', { n: days });
+  if (days === 1) return t('plan.tomorrow');
+  if (left > 1) return t('plan.openNow', { n: left });
+  if (left === 1) return t('plan.openNow1');
+  return left === 0 ? t('plan.lastDay') : t('plan.closed');
+}
+
+/** This season and the next, side by side, so a farmer can plan a year ahead. */
+function seasonsHtml(rec) {
+  const nx = rec.next;
+  const at = (start, o) => start + o * DAY;
+  const signed = (d) => (d > 0 ? `+${d}` : d < 0 ? `−${-d}` : '±0');
+  const note = nx.shiftOpen || nx.shiftClose ? t('plan.shifted', { o: signed(nx.shiftOpen), c: signed(nx.shiftClose) }) : t('plan.same');
+  return `<div class="seasons">
+    <div class="season"><div class="k">${esc(t('plan.this', { season: rec.seasonLabel }))}</div>
+      <div class="v">${esc(rangeText(at(rec.seasonStartMs, rec.open), at(rec.seasonStartMs, rec.close)))}</div>
+      <div class="d">${esc(countdownText(at(rec.seasonStartMs, rec.open), at(rec.seasonStartMs, rec.close)))}</div></div>
+    <div class="season next"><div class="k">${esc(t('plan.next', { season: nx.seasonLabel }))}</div>
+      <div class="v">${esc(rangeText(nx.openMs, nx.closeMs))}</div>
+      <div class="d">${esc(countdownText(nx.openMs, nx.closeMs))} · ${esc(note)}</div></div>
+  </div>`;
+}
+
+// ---------------------------------------------------------------- My fields
+// One card per place the farmer has checked, with the newest settings. Signed-in
+// farmers see their account's list; guests see this device's.
+
+const LOCAL_FIELDS = 'seedline:fields';
+let runsLoaded = false;   // the account's list has arrived
+const placeOf = (f) => `${(+f.lat).toFixed(4)},${(+f.lon).toFixed(4)}`;
+function localFields() { try { return JSON.parse(ls.get(LOCAL_FIELDS)) || []; } catch { return []; } }
+function storeLocalFields(list) { ls.set(LOCAL_FIELDS, JSON.stringify(list.slice(0, 40))); }
+
+/** Saved checks, one per place: the newest settings, keeping any name given. */
+function fieldList() {
+  const byPlace = new Map();
+  for (const f of user ? myRuns : localFields()) {
+    const k = placeOf(f), seen = byPlace.get(k);
+    if (!seen) byPlace.set(k, { ...f });
+    else if (!seen.label && f.label) seen.label = f.label;
+  }
+  return [...byPlace.values()];
+}
+
+/** Every check is remembered: in the account when signed in, else on this device. */
+function rememberField(r) {
+  const rec = r.result.rec, ok = !!rec?.viable;
+  const place = placeOf(r);
+  const label = fieldList().find((f) => placeOf(f) === place)?.label || '';
+  // Firestore rejects undefined, so every value is set.
+  const entry = {
+    hash: r.hash, lat: +r.lat.toFixed(4), lon: +r.lon.toFixed(4), crop: r.cropKey, maturity: r.maturity,
+    irrigated: r.irrigated, soil: r.soil, viable: ok, risk: ok ? rec.risk : null,
+    openMs: ok ? rec.seasonStartMs + rec.open * DAY : null, closeMs: ok ? rec.seasonStartMs + rec.close * DAY : null,
+    nextOpenMs: ok ? rec.next.openMs : null, nextCloseMs: ok ? rec.next.closeMs : null,
+    label, savedAt: Date.now(),
+  };
+  if (account && user) {
+    if (myRuns[0]?.hash !== entry.hash) {   // not the same field and settings as last time
+      myRuns = [entry, ...myRuns];
+      account.saveRun(entry).catch((e) => console.warn('Seedline: could not save this field to your account.', e));
+    }
+  } else if (!ls.get('seedline:signedin')) {
+    // Nothing is kept on the device for a signed-in farmer, so a shared device stays private.
+    storeLocalFields([entry, ...localFields().filter((f) => placeOf(f) !== place)]);
+  }
+  renderHomeBits();
+}
+
+/** A guest's fields move into the account they sign in to. */
+async function bringLocalFieldsToAccount() {
+  const have = new Set(myRuns.map(placeOf));
+  const local = localFields(), moving = local.filter((f) => !have.has(placeOf(f))).slice(0, 20);
+  const done = await Promise.allSettled(moving.map((f) => account.saveRun(f)));
+  const saved = new Set(moving.filter((_, i) => done[i].status === 'fulfilled').map(placeOf));
+  myRuns = [...myRuns, ...moving.filter((f) => saved.has(placeOf(f)))];
+  storeLocalFields(local.filter((f) => !saved.has(placeOf(f)) && !have.has(placeOf(f))));
+}
+
+/** Where a saved field stands today. Old saves roll forward a season at a time. */
+function fieldStatus(f) {
+  if (!f.viable || !f.openMs) return { key: 'none' };
+  let open = f.openMs, close = f.closeMs;
+  let nOpen = f.nextOpenMs ?? addYear(open), nClose = f.nextCloseMs ?? addYear(close);
+  const today = startOfToday();
+  for (let i = 0; close < today && i < 50; i++) { [open, close] = [nOpen, nClose]; [nOpen, nClose] = [addYear(nOpen), addYear(nClose)]; }
+  const days = Math.round((open - today) / DAY);
+  return { key: days <= 0 ? 'open' : 'soon', days, open, close, nOpen, nClose };
+}
+
+function renderHomeBits() {
+  const n = fieldList().length;
+  $('pickHome').hidden = !n;
+  $('pickHome').textContent = t('pick.fields', { n });
+  if (view === 'home') renderHome();
+}
+
+function fieldCardHtml({ f, s }) {
+  const place = placeOf(f);
+  const name = f.label || cropName(f.crop);
+  const meta = `${f.label ? `${cropName(f.crop)} · ` : ''}${(+f.lat).toFixed(2)}°, ${(+f.lon).toFixed(2)}°`;
+  const status = s.key === 'none' ? t('home.status.none') : countdownText(s.open, s.close);
+  const band = f.viable ? riskBand(f.risk) : null;
+  return `<article class="fcard s-${s.key}" data-place="${place}" data-hash="${esc(f.hash)}">
+    <div class="fctop"><span class="fcicon" aria-hidden="true">${ICON[f.crop] ?? '🌱'}</span>
+      <div class="fcname"><h3>${esc(name)}</h3><span class="fcmeta">${esc(meta)}</span></div></div>
+    <div class="fstatus s-${s.key}">${esc(status)}</div>
+    ${s.key === 'none'
+    ? `<p class="fcwin muted">${t('home.none.d')}</p>`
+    : `<div class="fcwin">${esc(rangeText(s.open, s.close))}</div><div class="fcnext">${esc(t('home.next', { dates: rangeText(s.nOpen, s.nClose) }))}</div>`}
+    ${band ? `<div class="fcrisk"><span class="band"><i class="${band.key}"></i>${t(`band.${band.key}`)}</span><span>${esc(t('home.risk', { n: f.risk }))}</span></div>` : ''}
+    <div class="fcfc" data-fc></div>
+    <div class="fcactions"><button type="button" class="primary" data-act="open">${t('home.open')}</button>
+      <button type="button" class="ghost" data-act="rename">${t('home.rename')}</button>
+      <button type="button" class="ghost" data-act="remove">${t('home.remove')}</button></div>
+  </article>`;
+}
+
+function renderHome() {
+  $('homeSub').innerHTML = user
+    ? esc(t('home.sub.account'))
+    : `${esc(t('home.sub.local'))}${account ? ` <button type="button" class="linkbtn inline" data-acct="in">${t('home.signin')}</button>` : ''}`;
+  const grid = $('homeGrid');
+  if (user && !runsLoaded) { grid.innerHTML = `<p class="sub homewait">${t('home.loading')}</p>`; return; }
+  const order = { open: 0, soon: 1, none: 2 };
+  const list = fieldList().map((f) => ({ f, s: fieldStatus(f) }))
+    .sort((a, b) => order[a.s.key] - order[b.s.key] || (a.s.open ?? 0) - (b.s.open ?? 0));
+  if (!list.length) {
+    grid.innerHTML = `<div class="homeempty"><span class="bigicon" aria-hidden="true">🌱</span><h3>${t('home.empty.title')}</h3><p class="sub">${t('home.empty.body')}</p>
+      <button type="button" class="primary" data-nav="new"><span aria-hidden="true">＋</span> ${t('home.add')}</button></div>`;
+    return;
+  }
+  grid.innerHTML = list.map(fieldCardHtml).join('')
+    + `<button type="button" class="fcard addcard" data-nav="new"><span aria-hidden="true">＋</span>${t('home.add')}</button>`;
+  for (const item of list) loadCardForecast(item);
+}
+
+// The 16-day forecast on a card, for fields whose window is open or near.
+const cardForecasts = new Map();   // place → promise of forecast days (or null)
+function loadCardForecast({ f, s }) {
+  if (s.key === 'none' || (s.key === 'soon' && s.days > 16) || !CROPS[f.crop]) return;
+  const place = placeOf(f);
+  if (!cardForecasts.has(place)) cardForecasts.set(place, fetchForecast(+f.lat, +f.lon).catch(() => null));
+  cardForecasts.get(place).then((days) => {
+    const el = $('homeGrid').querySelector(`[data-place="${place}"] [data-fc]`);
+    if (!el || !days) return;
+    // Seasonal soil moisture is not known here, so only cold and frost are judged.
+    const rec = { viable: true, seasonStartMs: s.open, open: 0, close: Math.round((s.close - s.open) / DAY), now: { soilWater: 1 } };
+    const o = outlook(days, cropFor(f.crop), rec, { irrigated: true });
+    if (o.status !== 'go' && o.status !== 'wait' && o.status !== 'soon') return;
+    const why = o.reasons.map((r) => (r === 'frost' ? t('home.why.frost', { date: fmtDate(o.frostMs, { weekday: 'short', day: 'numeric' }) }) : t('home.why.cold'))).join(', ');
+    const warn = o.reasons.length > 0;
+    el.className = `fcfc ${warn ? 'warn' : 'good'}`;
+    el.textContent = t(o.status === 'go' ? 'home.fc.go' : o.status === 'wait' ? 'home.fc.wait' : warn ? 'home.fc.watch' : 'home.fc.ok', { why });
+  });
+}
+
+function renameField(place, label) {
+  label = label.trim().slice(0, 60);
+  const relabel = (list) => list.map((f) => (placeOf(f) === place ? { ...f, label } : f));
+  if (user) {
+    myRuns = relabel(myRuns);
+    const [lat, lon] = place.split(',').map(Number);
+    account.renameField(lat, lon, label).catch((e) => console.warn('Seedline: could not rename the field.', e));
+  } else storeLocalFields(relabel(localFields()));
+  renderHomeBits();
+}
+function forgetField(place) {
+  if (user) {
+    myRuns = myRuns.filter((f) => placeOf(f) !== place);
+    const [lat, lon] = place.split(',').map(Number);
+    account.removeField(lat, lon).catch((e) => console.warn('Seedline: could not remove the field.', e));
+  } else storeLocalFields(localFields().filter((f) => placeOf(f) !== place));
+  renderHomeBits();
+}
+
+$('homeGrid').addEventListener('click', (e) => {
+  const act = e.target.closest('[data-act]')?.dataset.act;
+  const card = e.target.closest('.fcard[data-place]');
+  if (!act || !card) return;
+  const place = card.dataset.place;
+  if (act === 'open') applyHash(card.dataset.hash);
+  else if (act === 'remove') { if (confirm(t('home.removeQ'))) forgetField(place); }
+  else if (act === 'rename') {
+    const h3 = card.querySelector('h3');
+    const existing = fieldList().find((f) => placeOf(f) === place)?.label || '';
+    h3.outerHTML = `<form class="renameform"><input maxlength="60" aria-label="${esc(t('home.rename'))}" placeholder="${esc(t('home.namePh'))}" value="${esc(existing)}">
+      <button type="submit" class="primary">${t('home.save')}</button><button type="button" class="ghost" data-act="cancel">${t('home.cancel')}</button></form>`;
+    card.querySelector('.renameform input').focus();
+  } else if (act === 'cancel') renderHome();
+});
+$('homeGrid').addEventListener('submit', (e) => {
+  e.preventDefault();
+  const card = e.target.closest('.fcard[data-place]');
+  if (card) renameField(card.dataset.place, e.target.querySelector('input').value);
+});
+$('homeGrid').addEventListener('keydown', (e) => { if (e.key === 'Escape' && e.target.closest('.renameform')) renderHome(); });
+
 // ------------------------------------------------------------------ start-up
 
 refreshText();
+showTab('overview');
 const last = ls.get('seedline:last');
 if (last) { $('pickLast').hidden = false; $('pickLast').addEventListener('click', () => applyHash(last)); }
-applyHash(location.hash);
+if (location.hash === '#fields') { setPicking(false); showView('home'); } else if (!applyHash(location.hash)) goStart();
 // Offline reuse: the service worker keeps the app and the last fields' weather.
 if ('serviceWorker' in navigator && location.protocol !== 'file:') navigator.serviceWorker.register('sw.js').catch(() => {});

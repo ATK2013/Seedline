@@ -213,3 +213,106 @@ test('assignGreenups gives each season the cycle inside its search window', () =
   assert.ok(obs.every((o) => Number.isFinite(o.greenMs)));
   assert.equal(compareNdvi(r, CROPS.maize, obs).summary.verdict, 'agrees');
 });
+
+// ------------------------------------------------- satellite fetch (stubbed NASA)
+import { greenupRequests, fetchGreenups } from '../js/modis.js';
+
+test('greenupRequests covers 18 years per band in chunks NASA accepts', () => {
+  const reqs = greenupRequests(2026);
+  assert.equal(reqs.length, 4);
+  for (const band of ['MidGreenup.Num_Modes_01', 'MidGreenup.Num_Modes_02']) {
+    const mine = reqs.filter((r) => r.band === band).sort((a, b) => a.from - b.from);
+    assert.equal(mine[0].from, 2009);
+    assert.equal(mine.at(-1).to, 2026);
+    for (const r of mine) assert.ok(r.to - r.from + 1 <= 10, 'at most 10 dates per request');
+    for (let i = 1; i < mine.length; i++) assert.equal(mine[i].from, mine[i - 1].to + 1, 'no gaps or overlaps');
+  }
+});
+
+/** Install a fake fetch for the NASA host; anything else (the saved copy) is "not found". */
+function fakeNasa(handler) {
+  const calls = [];
+  globalThis.fetch = async (input, init = {}) => {
+    const url = String(input);
+    if (!url.includes('modis.ornl.gov')) return { ok: false, status: 404, json: async () => ({}) };
+    calls.push(url);
+    return handler(url, init, calls);
+  };
+  return calls;
+}
+const okJson = (days) => ({ ok: true, status: 200, json: async () => ({ subset: days.map((d) => ({ data: [d] })) }) });
+const FAST = { timeoutMs: 1000, quickFailMs: 5000, retryDelayMs: 1 };
+const realFetch = globalThis.fetch;
+
+test('fetchGreenups sends every request at once and merges the answers', async (t) => {
+  t.after(() => { globalThis.fetch = realFetch; });
+  let release;
+  const allIn = new Promise((r) => { release = r; });
+  const calls = fakeNasa(async (url, init, seen) => {
+    if (seen.length === 4) release();
+    // Each request only answers once all four are in flight: requests sent in
+    // rounds would never get here and the test would time out.
+    await Promise.race([allIn, new Promise((_, no) => setTimeout(() => no(new Error('requests were not sent together')), 500))]);
+    return okJson(url.includes('Modes_01') ? [19000, 32767, 18500] : [0, 18700]);
+  });
+  const r = await fetchGreenups(10.001, 20.001, { year: 2026, timing: FAST });
+  assert.equal(calls.length, 4);
+  assert.equal(r.source, 'live');
+  const DAY = 86400000;
+  assert.deepEqual(r.greens.map((ms) => ms / DAY), [18500, 18500, 18700, 18700, 19000, 19000]);
+});
+
+test('a fast failure is retried once; a slow one is not', async (t) => {
+  t.after(() => { globalThis.fetch = realFetch; });
+  let failedOnce = false;
+  const calls = fakeNasa(async (url) => {
+    if (url.includes('Modes_02') && url.includes('A2009') && !failedOnce) { failedOnce = true; return { ok: false, status: 502 }; }
+    return okJson([19000]);
+  });
+  const r = await fetchGreenups(11.001, 21.001, { year: 2026, timing: FAST });
+  assert.equal(calls.length, 5, 'four requests plus one retry');
+  assert.equal(r.greens.length, 4);
+
+  const calls2 = fakeNasa(async (url) => (url.includes('Modes_02') ? { ok: false, status: 502 } : okJson([19000])));
+  await assert.rejects(fetchGreenups(12.001, 22.001, { year: 2026, timing: { ...FAST, quickFailMs: -1 } }), /502/);
+  assert.equal(calls2.filter((u) => u.includes('Modes_02')).length, 2, 'each failing request asked once, no retry');
+});
+
+test('fetchGreenups gives up at its time limit, and when the field changes', async (t) => {
+  t.after(() => { globalThis.fetch = realFetch; });
+  fakeNasa((url, init) => new Promise((_, no) => init.signal.addEventListener('abort', () => no(new DOMException('aborted', 'AbortError')))));
+  const t0 = Date.now();
+  await assert.rejects(fetchGreenups(13.001, 23.001, { year: 2026, timing: { ...FAST, timeoutMs: 60, quickFailMs: -1 } }));
+  assert.ok(Date.now() - t0 < 1000, 'stopped at the time limit');
+  const ctrl = new AbortController();
+  const pending = fetchGreenups(14.001, 24.001, { year: 2026, signal: ctrl.signal, timing: FAST });
+  setTimeout(() => ctrl.abort(), 20);
+  await assert.rejects(pending);
+});
+
+// ------------------------------------------------------------- next season
+test('next season follows this one, moved only by a significant trend', () => {
+  const stable = analyze(synthetic(), CROPS.maize, 45).rec;
+  assert.equal(stable.next.seasonLabel, String(+stable.seasonLabel + 1));
+  assert.equal(stable.next.seasonStartMs - stable.seasonStartMs > 364 * DAY, true);
+  assert.deepEqual([stable.next.open, stable.next.close, stable.next.shiftOpen, stable.next.shiftClose], [stable.open, stable.close, 0, 0]);
+  // Same calendar day a year on, even across a leap year.
+  const md = (ms) => new Date(ms).toISOString().slice(5, 10);
+  assert.equal(md(stable.next.openMs), md(stable.seasonStartMs + stable.open * DAY));
+  assert.equal(md(stable.next.closeMs), md(stable.seasonStartMs + stable.close * DAY));
+
+  const warming = analyze(synthetic({ years: 40, warming: 0.08 }), CROPS.maize, 45);
+  assert.ok(warming.trends.open.significant);
+  assert.ok(warming.rec.next.open <= warming.rec.open, 'a window that opens earlier each year opens earlier next season');
+  assert.equal(warming.rec.next.shiftOpen, Math.round(warming.rec.open + warming.trends.open.slope) - warming.rec.open);
+});
+
+test('southern next-season labels straddle two years', () => {
+  const s = synthetic();
+  const flip = { ...s, tmin: new Float32Array(s.n), tmax: new Float32Array(s.n) };
+  for (let i = 0; i < s.n; i++) { flip.tmin[i] = s.tmin[(i + 182) % s.n]; flip.tmax[i] = s.tmax[(i + 182) % s.n]; }
+  const rec = analyze(flip, CROPS.maize, -35).rec;
+  const [a, b] = rec.seasonLabel.split('/');
+  assert.equal(rec.next.seasonLabel, `${+a + 1}/${String(+a + 2).slice(2)}`);
+  assert.equal(b, String(+a + 1).slice(2));
+});
