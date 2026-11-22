@@ -25,6 +25,18 @@ npm test
 
 - **Full-screen map picker** with place search, then a recommendation: the
   planting window, a 0–100 risk score, and why plantings fail.
+- **This season and next**: the window for the coming season and the one
+  after it, with calendar dates and a countdown. Next season's dates move by
+  one year of the long-term trend in the window, where that trend is
+  statistically significant; otherwise they stay the same.
+- **My fields**: a home screen with one card per field checked, sorted by the
+  soonest window. Each card shows the countdown, this season's and next
+  season's windows, the risk, and a forecast line when the window is close.
+  Fields can be renamed and removed. Guests' fields stay on the device;
+  signed-in farmers' fields are in their account (a guest's fields move into
+  the account on sign-in).
+- **Field tabs**: Overview, Options, Risk, History, Satellite and How it works.
+  The browser's back button moves between My fields and a field.
 - **Eleven crops**, including autumn-sown winter wheat and rice, in three
   maturity classes, on light, medium or heavy soil, rainfed or irrigated.
 - **16-day forecast** (Open-Meteo): in the two weeks before the window it

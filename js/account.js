@@ -7,7 +7,7 @@ import {
   getAuth, GoogleAuthProvider, signInWithPopup, signOut, onAuthStateChanged,
   createUserWithEmailAndPassword, signInWithEmailAndPassword, sendPasswordResetEmail, updateProfile,
 } from 'https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js';
-import { getFirestore, doc, getDoc, setDoc, addDoc, collection, query, orderBy, limit, getDocs, serverTimestamp } from 'https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js';
+import { getFirestore, doc, getDoc, setDoc, addDoc, collection, query, where, orderBy, limit, getDocs, writeBatch, serverTimestamp } from 'https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js';
 
 // A Firebase web config is not a secret: the Firestore security rules are
 // what keep each farmer's data private.
@@ -59,11 +59,34 @@ export async function saveRun(run) {
 }
 
 /** The most recent fields this farmer checked, newest first. Empty for guests. */
-export async function recentRuns(n = 20) {
+export async function recentRuns(n = 60) {
   const id = uid();
   if (!id) return [];
   const q = query(collection(db, 'users', id, 'runs'), orderBy('createdAt', 'desc'), limit(n));
   return (await getDocs(q)).docs.map((d) => ({ id: d.id, ...d.data() }));
+}
+
+/** Every saved check at one field (lat/lon as saved, rounded to 4 decimals). */
+async function runsAt(id, lat, lon) {
+  return getDocs(query(collection(db, 'users', id, 'runs'), where('lat', '==', lat), where('lon', '==', lon)));
+}
+
+/** Rename a field: the name is stored on each of its saved checks. */
+export async function renameField(lat, lon, label) {
+  const id = uid();
+  if (!id) return;
+  const batch = writeBatch(db);
+  (await runsAt(id, lat, lon)).forEach((d) => batch.update(d.ref, { label }));
+  await batch.commit();
+}
+
+/** Remove a field and every check saved for it. */
+export async function removeField(lat, lon) {
+  const id = uid();
+  if (!id) return;
+  const batch = writeBatch(db);
+  (await runsAt(id, lat, lon)).forEach((d) => batch.delete(d.ref));
+  await batch.commit();
 }
 
 /** Settings that follow the farmer between devices (language, units). */

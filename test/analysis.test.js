@@ -289,3 +289,30 @@ test('fetchGreenups gives up at its time limit, and when the field changes', asy
   setTimeout(() => ctrl.abort(), 20);
   await assert.rejects(pending);
 });
+
+// ------------------------------------------------------------- next season
+test('next season follows this one, moved only by a significant trend', () => {
+  const stable = analyze(synthetic(), CROPS.maize, 45).rec;
+  assert.equal(stable.next.seasonLabel, String(+stable.seasonLabel + 1));
+  assert.equal(stable.next.seasonStartMs - stable.seasonStartMs > 364 * DAY, true);
+  assert.deepEqual([stable.next.open, stable.next.close, stable.next.shiftOpen, stable.next.shiftClose], [stable.open, stable.close, 0, 0]);
+  // Same calendar day a year on, even across a leap year.
+  const md = (ms) => new Date(ms).toISOString().slice(5, 10);
+  assert.equal(md(stable.next.openMs), md(stable.seasonStartMs + stable.open * DAY));
+  assert.equal(md(stable.next.closeMs), md(stable.seasonStartMs + stable.close * DAY));
+
+  const warming = analyze(synthetic({ years: 40, warming: 0.08 }), CROPS.maize, 45);
+  assert.ok(warming.trends.open.significant);
+  assert.ok(warming.rec.next.open <= warming.rec.open, 'a window that opens earlier each year opens earlier next season');
+  assert.equal(warming.rec.next.shiftOpen, Math.round(warming.rec.open + warming.trends.open.slope) - warming.rec.open);
+});
+
+test('southern next-season labels straddle two years', () => {
+  const s = synthetic();
+  const flip = { ...s, tmin: new Float32Array(s.n), tmax: new Float32Array(s.n) };
+  for (let i = 0; i < s.n; i++) { flip.tmin[i] = s.tmin[(i + 182) % s.n]; flip.tmax[i] = s.tmax[(i + 182) % s.n]; }
+  const rec = analyze(flip, CROPS.maize, -35).rec;
+  const [a, b] = rec.seasonLabel.split('/');
+  assert.equal(rec.next.seasonLabel, `${+a + 1}/${String(+a + 2).slice(2)}`);
+  assert.equal(b, String(+a + 1).slice(2));
+});

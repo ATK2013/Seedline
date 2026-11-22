@@ -411,9 +411,37 @@ export function analyze(series, crop, lat, opts = {}) {
       daysToOpen: win.open - todayOffset,
       now: { dateMs: s.t0 + lastIdx * DAY, tmean7: t7 / 7, rain14: r14, soilWater: s.sw[lastIdx], warmEnough: t7 / 7 >= crop.germ, moistEnough: !!opts.irrigated || s.sw[lastIdx] >= DRY_START_SW },
     };
+    rec.next = nextSeason(rec, trends, ty, month, lat);
   }
 
   return { seasons, outcomes, curves, windows, trends, rec, lat, firstYear, lastYear, southern: lat < 0, refStartMs: Date.UTC(2023, lat >= 0 ? 0 : 6, 1) };
+}
+
+/**
+ * The season after the coming one, so farmers can plan a year ahead. Its
+ * window is this season's moved by one year of the long-term trend in the
+ * window's opening and closing dates, but only where that trend is
+ * statistically significant: a trend that could be noise moves nothing.
+ */
+export function nextSeason(rec, trends, ty, month, lat) {
+  const perYear = (tr) => (tr?.significant && Number.isFinite(tr.slope) ? tr.slope : 0);
+  const clamp = (o) => Math.max(0, Math.min(SEASON_DAYS - 1, Math.round(o)));
+  const open = clamp(rec.open + perYear(trends.open));
+  const close = Math.max(open, clamp(rec.close + perYear(trends.close)));
+  const best = Math.min(close, Math.max(open, clamp(rec.best + (perYear(trends.open) + perYear(trends.close)) / 2)));
+  // Calendar dates: the same day and month a year on, then the trend's shift.
+  // (Counting days from the season start would slip a day in leap years.)
+  const yearOn = (ms) => { const d = new Date(ms); return Date.UTC(d.getUTCFullYear() + 1, d.getUTCMonth(), d.getUTCDate()); };
+  const at = (o) => rec.seasonStartMs + o * DAY;
+  return {
+    seasonLabel: lat >= 0 ? String(ty + 1) : `${ty + 1}/${String(ty + 2).slice(2)}`,
+    seasonStartMs: Date.UTC(ty + 1, month, 1),
+    open, close, best,
+    shiftOpen: open - rec.open,
+    shiftClose: close - rec.close,
+    openMs: yearOn(at(rec.open)) + (open - rec.open) * DAY,
+    closeMs: yearOn(at(rec.close)) + (close - rec.close) * DAY,
+  };
 }
 
 /** Risk score (0–100) to a plain-language band. */
