@@ -1,12 +1,12 @@
 // Bump ?v= here and in index.html whenever these files change, so browsers
 // never pair a new page with stale cached scripts or styles.
-import { CROPS, MATURITY } from './crops.js?v=10';
-import { fetchDaily } from './power.js?v=10';
-import { ndviTargets, compareNdvi, assignGreenups, TOLERANCE } from './ndvi.js?v=10';
-import { fetchGreenups, pixelKey } from './modis.js?v=10';
-import { fetchForecast, outlook } from './forecast.js?v=10';
-import { parsePower, analyze, riskBand, looksLikeWater, SOILS, OUT, SEASON_DAYS } from './analysis.js?v=10';
-import { LANGS, t, setLang, getLang, locale, applyStatic } from './i18n.js?v=10';
+import { CROPS, MATURITY } from './crops.js?v=11';
+import { fetchDaily } from './power.js?v=11';
+import { ndviTargets, compareNdvi, assignGreenups, TOLERANCE } from './ndvi.js?v=11';
+import { fetchGreenups, pixelKey } from './modis.js?v=11';
+import { fetchForecast, outlook } from './forecast.js?v=11';
+import { parsePower, analyze, riskBand, looksLikeWater, SOILS, OUT, SEASON_DAYS } from './analysis.js?v=11';
+import { LANGS, t, setLang, getLang, locale, applyStatic } from './i18n.js?v=11';
 
 const $ = (id) => document.getElementById(id);
 const DAY = 86400000;
@@ -1044,7 +1044,7 @@ document.addEventListener('click', (e) => {
 const arrivedWithLink = /^#-?\d/.test(location.hash);
 if (!arrivedWithLink && !ls.get('seedline:guest') && !ls.get('seedline:signedin')) showSignin(true);
 
-import('./account.js?v=10').then((mod) => {
+import('./account.js?v=11').then((mod) => {
   account = mod;
   $('googleBtn').disabled = false;
   $('emailSubmit').disabled = false;

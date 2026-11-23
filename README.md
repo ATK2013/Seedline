@@ -108,7 +108,9 @@ critical path:
 - green-up belongs to the pixel, so a field is fetched once and every crop and
   setting there reuses it; answers are also kept in the browser;
 - the example fields ship with a saved copy of their NASA data
-  (`data/greenups.json`), so a demo never waits on NASA;
+  (`data/greenups.json`), so a demo never waits on NASA. Each example pin sits
+  on a pixel that NASA's MCD12Q1 land-cover map labels cropland in every year
+  2019–2022 (several earlier pins sat on towns or a forest);
 - a request that fails quickly is retried once; one that fails after a long
   wait is not, and the farmer gets a "Try again" button instead.
 
