@@ -35,6 +35,12 @@ npm test
   Fields can be renamed and removed. Guests' fields stay on the device;
   signed-in farmers' fields are in their account (a guest's fields move into
   the account on sign-in).
+- **Map settings** (a tab on the full-screen map, or the gear on the small
+  map): Map, Light or Satellite style, and switches for place names, your saved
+  fields (labelled with their names), the example fields, and what the data
+  covers (the ~50 km weather cell NASA POWER reads and the 500 m satellite
+  pixel around the pin). Kept on the device. Map styles (Map, Light,
+  Satellite) and their place names come from Esri's tile services.
 - **Field tabs**: Overview, Options, Risk, History, Satellite and How it works.
   The browser's back button moves between My fields and a field.
 - **Eleven crops**, including autumn-sown winter wheat and rice, in three
