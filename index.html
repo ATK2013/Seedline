@@ -5,11 +5,20 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Seedline — when to plant, from 40+ years of weather</title>
   <meta name="description" content="Drop a pin, pick a crop. Seedline replays four decades of NASA daily weather to show how your safe planting window has moved and when to plant this season.">
+  <link rel="manifest" href="manifest.webmanifest">
+  <meta name="theme-color" content="#17402a">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-title" content="Seedline">
+  <meta name="apple-mobile-web-app-status-bar-style" content="default">
+  <link rel="icon" href="icons/icon.svg" type="image/svg+xml">
+  <link rel="icon" href="icons/favicon-32.png" sizes="32x32" type="image/png">
+  <link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,650&display=swap">
   <link rel="stylesheet" href="vendor/leaflet/leaflet.css">
-  <link rel="stylesheet" href="css/style.css?v=12">
+  <link rel="stylesheet" href="css/style.css?v=13">
 </head>
 <body class="picking">
   <script>
@@ -137,6 +146,7 @@
           <button type="button" data-nav="new"><span aria-hidden="true">＋</span> <span data-i18n="nav.new"></span></button>
         </nav>
         <div class="prefs">
+          <button type="button" id="installHeader" class="acctbtn" hidden data-i18n="inst.header"></button>
           <div id="acct" class="acct" hidden></div>
           <select id="lang" aria-label="Language"></select>
           <select id="units" aria-label="Units">
@@ -257,8 +267,16 @@
     </section>
   </main>
   <div id="tip" class="tip" hidden></div>
+  <div id="installBar" class="installbar" role="region" aria-labelledby="installTitle" hidden>
+    <img src="icons/icon-192.png" alt="" width="44" height="44">
+    <div class="installtext"><b id="installTitle" data-i18n="inst.title"></b><span id="installBody"></span></div>
+    <div class="installbtns">
+      <button type="button" id="installGo" class="primary" data-i18n="inst.go"></button>
+      <button type="button" id="installLater" class="ghost"></button>
+    </div>
+  </div>
 
   <script src="vendor/leaflet/leaflet.js"></script>
-  <script type="module" src="js/app.js?v=12"></script>
+  <script type="module" src="js/app.js?v=13"></script>
 </body>
 </html>
