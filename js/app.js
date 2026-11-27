@@ -1,12 +1,12 @@
 // Bump ?v= here and in index.html whenever these files change, so browsers
 // never pair a new page with stale cached scripts or styles.
-import { CROPS, MATURITY } from './crops.js?v=10';
-import { fetchDaily } from './power.js?v=10';
-import { ndviTargets, compareNdvi, assignGreenups, TOLERANCE } from './ndvi.js?v=10';
-import { fetchGreenups, pixelKey } from './modis.js?v=10';
-import { fetchForecast, outlook } from './forecast.js?v=10';
-import { parsePower, analyze, riskBand, looksLikeWater, SOILS, OUT, SEASON_DAYS } from './analysis.js?v=10';
-import { LANGS, t, setLang, getLang, locale, applyStatic } from './i18n.js?v=10';
+import { CROPS, MATURITY } from './crops.js?v=12';
+import { fetchDaily } from './power.js?v=12';
+import { ndviTargets, compareNdvi, assignGreenups, TOLERANCE } from './ndvi.js?v=12';
+import { fetchGreenups, pixelKey } from './modis.js?v=12';
+import { fetchForecast, outlook } from './forecast.js?v=12';
+import { parsePower, analyze, riskBand, looksLikeWater, SOILS, OUT, SEASON_DAYS } from './analysis.js?v=12';
+import { LANGS, t, setLang, getLang, locale, applyStatic } from './i18n.js?v=12';
 
 const $ = (id) => document.getElementById(id);
 const DAY = 86400000;
@@ -50,6 +50,7 @@ function refreshText() {
   buildAssume();
   renderAccount();
   renderEmailForm();
+  if (pin) drawFootprint(pin.getLatLng().lat, pin.getLatLng().lng);
   if (current) render();
 }
 
@@ -92,11 +93,131 @@ $('assumeReset').addEventListener('click', () => { ls.del(`seedline:crop:${cropK
 
 // ----------------------------------------------------------------------- map
 
-const map = L.map('map', { worldCopyJump: true, zoomControl: false }).setView([20, 10], 3);
+const map = L.map('map', { worldCopyJump: true, zoomControl: false, maxZoom: 18 }).setView([20, 10], 3);
 L.control.zoom({ position: 'bottomright' }).addTo(map);
-const streets = L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom: 17, attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors' }).addTo(map);
-const satellite = L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', { maxZoom: 17, attribution: 'Imagery &copy; Esri, Maxar, Earthstar Geographics' });
-L.control.layers({ Map: streets, Satellite: satellite }, null, { collapsed: false, position: 'bottomleft' }).addTo(map);
+// Map styles and place names, all from Esri's keyless tile services. Names sit
+// on a layer of their own so they can be switched off; each style has names
+// drawn to suit it. (CARTO's free styles now require an API key.)
+const ESRI = 'https://server.arcgisonline.com/ArcGIS/rest/services/';
+const esri = (path, opts = {}) => L.tileLayer(`${ESRI}${path}/MapServer/tile/{z}/{y}/{x}`, { maxZoom: 18, ...opts });
+map.attributionControl.setPrefix('<a href="https://leafletjs.com">Leaflet</a> | Powered by <a href="https://www.esri.com">Esri</a>');
+map.createPane('names');
+map.getPane('names').style.zIndex = 450;          // above the base and outlines, below the pins
+map.getPane('names').style.pointerEvents = 'none';
+// maxNativeZoom is the deepest level each service really draws (measured: past
+// it Esri serves "Map data not yet available" tiles); Leaflet enlarges beyond it.
+// The terrain map only has detail to level 9 everywhere, so the Map style hands
+// over to the light-grey map, which goes to 16, when zoomed in further.
+const terrain = esri('World_Terrain_Base', { maxZoom: 9, maxNativeZoom: 9, attribution: 'Sources: Esri, USGS, NOAA' });
+const terrainNames = esri('Reference/World_Reference_Overlay', { maxZoom: 9, maxNativeZoom: 9, pane: 'names', attribution: 'Places: Esri, Garmin, USGS, NPS' });
+const grey = (opts) => esri('Canvas/World_Light_Gray_Base', { maxNativeZoom: 16, attribution: 'Esri, HERE, Garmin, &copy; OpenStreetMap contributors', ...opts });
+const greyNames = (opts) => esri('Canvas/World_Light_Gray_Reference', { maxNativeZoom: 16, pane: 'names', ...opts });
+const BASES = {
+  map: L.layerGroup([terrain, grey({ minZoom: 10 })]),
+  light: grey(),
+  satellite: esri('World_Imagery', { maxNativeZoom: 17, attribution: 'Imagery: Esri, Vantor, Earthstar Geographics' }),
+};
+const NAMES = {
+  map: L.layerGroup([terrainNames, greyNames({ minZoom: 10 })]),
+  light: greyNames(),
+  satellite: esri('Reference/World_Boundaries_and_Places', { maxNativeZoom: 16, pane: 'names', attribution: 'Places: Esri, HERE, Garmin' }),
+};
+const fieldsLayer = L.layerGroup();      // the farmer's saved fields, with their names
+const examplesLayer = L.layerGroup();    // the demo fields
+const footprintLayer = L.layerGroup();   // what the weather and satellite data cover around the pin
+
+const MAP_DEFAULTS = { style: 'map', names: true, fields: true, examples: false, footprint: true };
+const mapPrefs = (() => { try { return { ...MAP_DEFAULTS, ...JSON.parse(ls.get('seedline:map') || '{}') }; } catch { return { ...MAP_DEFAULTS }; } })();
+if (!BASES[mapPrefs.style]) mapPrefs.style = 'map';
+const showLayer = (layer, on) => (on ? map.addLayer(layer) : map.removeLayer(layer));
+
+function applyMapPrefs() {
+  for (const [k, layer] of Object.entries(BASES)) showLayer(layer, k === mapPrefs.style);
+  for (const [k, layer] of Object.entries(NAMES)) showLayer(layer, mapPrefs.names && k === mapPrefs.style);
+  showLayer(fieldsLayer, mapPrefs.fields);
+  showLayer(examplesLayer, mapPrefs.examples);
+  showLayer(footprintLayer, mapPrefs.footprint);
+  document.querySelectorAll('input[name=mstyle]').forEach((r) => { r.checked = r.value === mapPrefs.style; });
+  document.querySelectorAll('[data-mpref]').forEach((c) => { c.checked = !!mapPrefs[c.dataset.mpref]; });
+}
+$('ppanel-map').addEventListener('change', (e) => {
+  if (e.target.name === 'mstyle') mapPrefs.style = e.target.value;
+  else if (e.target.dataset.mpref) mapPrefs[e.target.dataset.mpref] = e.target.checked;
+  else return;
+  ls.set('seedline:map', JSON.stringify(mapPrefs));
+  applyMapPrefs();
+});
+
+// The full-screen map's card has two tabs: Find a field, and Map settings.
+function showPickTab(name) {
+  for (const b of document.querySelectorAll('#pickTabs [role=tab]')) {
+    const on = b.dataset.ptab === name;
+    b.setAttribute('aria-selected', String(on));
+    b.tabIndex = on ? 0 : -1;
+  }
+  $('ppanel-find').hidden = name !== 'find';
+  $('ppanel-map').hidden = name !== 'map';
+}
+$('pickTabs').addEventListener('click', (e) => { const b = e.target.closest('[role=tab]'); if (b) showPickTab(b.dataset.ptab); });
+$('pickTabs').addEventListener('keydown', (e) => {
+  if (e.key !== 'ArrowRight' && e.key !== 'ArrowLeft') return;
+  e.preventDefault();
+  const other = $('pickTabs').querySelector('[aria-selected=false]');
+  showPickTab(other.dataset.ptab);
+  other.focus();
+});
+
+// A gear on the small map opens the same settings on the full-screen map.
+const SettingsControl = L.Control.extend({
+  options: { position: 'topright' },
+  onAdd() {
+    const b = L.DomUtil.create('button', 'mapgear');
+    b.type = 'button';
+    b.dataset.i18nAttr = 'aria-label:ptab.map;title:ptab.map';
+    b.innerHTML = '<svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><path fill="none" stroke="currentColor" stroke-width="1.800" stroke-linejoin="round" d="M10.300 3h3.400l.500 2.400 1.700.900 2.300-.900 1.700 2.900-1.800 1.600v2.200l1.800 1.600-1.700 2.900-2.300-.900-1.700.900-.500 2.400h-3.400l-.500-2.400-1.700-.900-2.300.900-1.700-2.900 1.800-1.600v-2.200L3.900 8.300l1.700-2.900 2.300.900 1.700-.900z"/><circle cx="12" cy="12" r="2.800" fill="none" stroke="currentColor" stroke-width="1.800"/></svg>';
+    L.DomEvent.disableClickPropagation(b);
+    L.DomEvent.on(b, 'click', () => { showPickTab('map'); setPicking(true); });
+    return b;
+  },
+});
+new SettingsControl().addTo(map);
+
+/** The farmer's saved fields on the map, each with its name; a tap opens it. */
+function renderFieldMarkers() {
+  fieldsLayer.clearLayers();
+  for (const f of fieldList()) {
+    L.circleMarker([+f.lat, +f.lon], { radius: 7, weight: 2, color: '#fff', fillColor: '#24583a', fillOpacity: 1, bubblingMouseEvents: false })
+      .bindTooltip(esc(f.label || cropName(f.crop)), { permanent: true, direction: 'right', offset: [8, 0], className: 'maplabel' })
+      .on('click', () => applyHash(f.hash))
+      .addTo(fieldsLayer);
+  }
+}
+
+/** Around the pin: the weather cell NASA POWER reads, and the satellite pixel. */
+function drawFootprint(lat, lon) {
+  footprintLayer.clearLayers();
+  // POWER's weather comes from MERRA-2 cells of 0.5° × 0.625°; this is the cell holding the pin.
+  const cLat = Math.round(lat / 0.5) * 0.5, cLon = Math.round(lon / 0.625) * 0.625;
+  L.rectangle([[cLat - 0.25, cLon - 0.3125], [cLat + 0.25, cLon + 0.3125]], { color: '#2a78d6', weight: 2, dashArray: '6 4', fillOpacity: 0.05, interactive: false }).addTo(footprintLayer);
+  weatherLabel = L.marker([cLat + 0.25, cLon], { interactive: false, keyboard: false, icon: L.divIcon({ className: 'fplabel', html: esc(t('fp.weather')), iconSize: null }) });
+  // The satellite check reads one 500 m MODIS pixel.
+  const dLat = 0.00225, dLon = dLat / Math.max(0.1, Math.cos((lat * Math.PI) / 180));
+  L.rectangle([[lat - dLat, lon - dLon], [lat + dLat, lon + dLon]], { color: '#c9502e', weight: 2, fillOpacity: 0.12, interactive: false }).addTo(footprintLayer);
+  pixelLabel = L.marker([lat + dLat, lon], { interactive: false, keyboard: false, icon: L.divIcon({ className: 'fplabel sat', html: esc(t('fp.satellite')), iconSize: null }) });
+  syncFootprintLabels();
+}
+// Each outline is too small to see until zoomed in, so its label waits too:
+// the ~50 km weather area from regional zoom, the 500 m pixel from field zoom.
+let weatherLabel = null, pixelLabel = null;
+function syncFootprintLabels() {
+  const z = map.getZoom();
+  if (weatherLabel) showLayer(weatherLabel, mapPrefs.footprint && z >= 7);
+  if (pixelLabel) showLayer(pixelLabel, mapPrefs.footprint && z >= 13);
+}
+map.on('zoomend', syncFootprintLabels);
+$('ppanel-map').addEventListener('change', syncFootprintLabels);
+applyMapPrefs();
+
 const pinIcon = L.divIcon({ className: 'pin', html: '<svg viewBox="0 0 32 42" width="32" height="42"><path d="M16 41C16 41 30 25.5 30 15A14 14 0 0 0 2 15C2 25.5 16 41 16 41Z" fill="var(--accent)" stroke="#fff" stroke-width="2"/><path d="M16 23v-8m0 1c0-4-2.500-5.500-5.500-5.500 0 3.500 2 5.500 5.500 5.500Zm0 2.500c0-3 2-4.500 5-4.500 0 3-2 4.500-5 4.500Z" fill="#fff" stroke="#fff" stroke-width="1.200" stroke-linecap="round"/></svg>', iconSize: [32, 42], iconAnchor: [16, 41] });
 let pin = null;
 
@@ -105,6 +226,7 @@ function setPin(lat, lon, { pan = false } = {}) {
   $('lat').value = lat.toFixed(4);
   $('lon').value = lon.toFixed(4);
   if (!pin) pin = L.marker([lat, lon], { icon: pinIcon }).addTo(map); else pin.setLatLng([lat, lon]);
+  drawFootprint(lat, lon);
   if (pan) map.setView([lat, lon], Math.max(map.getZoom(), 7));
 }
 
@@ -125,7 +247,7 @@ function choose(lat, lon) {
   if (wasPicking) setTimeout(() => setPicking(false), 550);
 }
 map.on('click', (e) => choose(e.latlng.lat, e.latlng.lng));
-$('expand').addEventListener('click', () => setPicking(true));
+$('expand').addEventListener('click', () => { showPickTab('find'); setPicking(true); });
 $('pickDone').addEventListener('click', () => setPicking(false));
 addEventListener('keydown', (e) => { if (e.key === 'Escape' && picking() && pin) setPicking(false); });
 
@@ -158,6 +280,14 @@ document.querySelectorAll('[data-example]').forEach((b) => b.addEventListener('c
   if (picking()) map.setView([+lat, +lon], 6, { animate: false });
   choose(+lat, +lon);
 }));
+// The example fields on the map too (shown from Map settings).
+document.querySelectorAll('.pickex [data-example]').forEach((b) => {
+  const [lat, lon] = b.dataset.example.split(',').map(Number);
+  L.circleMarker([lat, lon], { radius: 6, weight: 2, color: '#fff', fillColor: '#c9502e', fillOpacity: 1, bubblingMouseEvents: false })
+    .bindTooltip(esc(b.textContent), { permanent: true, direction: 'right', offset: [8, 0], className: 'maplabel ex' })
+    .on('click', () => b.click())
+    .addTo(examplesLayer);
+});
 
 function showStatus(title, body, kind = 'info') {
   const el = $('status');
@@ -1044,7 +1174,7 @@ document.addEventListener('click', (e) => {
 const arrivedWithLink = /^#-?\d/.test(location.hash);
 if (!arrivedWithLink && !ls.get('seedline:guest') && !ls.get('seedline:signedin')) showSignin(true);
 
-import('./account.js?v=10').then((mod) => {
+import('./account.js?v=12').then((mod) => {
   account = mod;
   $('googleBtn').disabled = false;
   $('emailSubmit').disabled = false;
@@ -1099,7 +1229,7 @@ function goHome() {
   if (location.hash !== '#fields') location.hash = '#fields';
   else showView('home');
 }
-function newField() { setPicking(true); }
+function newField() { showPickTab('find'); setPicking(true); }
 
 /** Where to land with no field in the address: My fields if there are any, else the map. */
 function goStart() {
@@ -1256,6 +1386,7 @@ function fieldStatus(f) {
 }
 
 function renderHomeBits() {
+  renderFieldMarkers();
   const n = fieldList().length;
   $('pickHome').hidden = !n;
   $('pickHome').textContent = t('pick.fields', { n });

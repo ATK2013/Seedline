@@ -104,7 +104,7 @@ body.picking .picker { display: block; position: fixed; z-index: 600; top: 16px;
   body.picking .picker { top: 10px; left: 10px; width: calc(100vw - 20px); }
   .pickcard { padding: 12px 14px; gap: 8px; }
   .pickcard h2 { font-size: 21px; }
-  .pickcard > p:first-of-type { display: none; }
+  #ppanel-find > p:first-of-type { display: none; }
   .pickex { flex-wrap: nowrap; overflow-x: auto; scrollbar-width: none; }
   .pickex button, .pickex span { flex: none; }
 }
@@ -517,6 +517,32 @@ html[data-start="home"] #fieldView { display: none; }
   .homeview { padding: 0 16px 40px; }
   .mainnav { order: 3; width: 100%; margin: 4px 0 0; }
 }
+
+/* ------------------------------------------------------------ map settings */
+.picktabs { display: flex; gap: 4px; padding: 4px; background: var(--surface-2); border-radius: 999px; }
+.picktabs [role=tab] { flex: 1; padding: 7px 10px; border-radius: 999px; border-color: transparent; background: transparent; color: var(--text-2); font-size: 13.5px; font-weight: 600; white-space: nowrap; }
+.picktabs [role=tab][aria-selected=true] { background: var(--surface); color: var(--text); box-shadow: 0 1px 3px rgb(0 0 0 / .14); }
+.ppanel { display: grid; gap: 10px; }
+.msstyle { display: flex; flex-wrap: wrap; gap: 8px; margin: 0; padding: 0; border: 0; }
+.msstyle legend { width: 100%; margin-bottom: 6px; padding: 0; font-size: 12.5px; color: var(--text-2); }
+.msstyle label { display: flex; flex: 1; align-items: center; gap: 8px; padding: 9px 12px; border: 1px solid var(--line); border-radius: 10px; font-size: 14px; color: var(--text); cursor: pointer; }
+.msstyle label:has(input:checked) { border-color: var(--brand); background: color-mix(in srgb, var(--brand) 10%, var(--surface)); font-weight: 600; }
+.msstyle input { accent-color: var(--brand); }
+.mstoggles { display: grid; }
+.mstoggle { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 10px 2px; border-bottom: 1px solid var(--line); font-size: 14px; color: var(--text); cursor: pointer; }
+.mstoggle > span { display: grid; gap: 1px; min-width: 0; }
+.mstoggle input { appearance: none; position: relative; flex: none; width: 42px; height: 24px; margin: 0; border-radius: 999px; background: var(--line); cursor: pointer; transition: background .15s; }
+.mstoggle input::after { content: ""; position: absolute; top: 3px; left: 3px; width: 18px; height: 18px; border-radius: 50%; background: #fff; box-shadow: 0 1px 2px rgb(0 0 0 / .3); transition: translate .15s; }
+.mstoggle input:checked { background: var(--brand); }
+.mstoggle input:checked::after { translate: 18px 0; }
+.mstoggle input:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.mapgear { display: grid; place-items: center; width: 34px; height: 34px; padding: 0; border-radius: 8px; border: 2px solid rgb(0 0 0 / .2); background: #fff; background-clip: padding-box; color: #1c2418; cursor: pointer; }
+.mapgear:hover { background-color: #f4f4f4; }
+body.picking .mapgear { display: none; }
+.leaflet-tooltip.maplabel { padding: 2px 7px; border-radius: 6px; font: 600 12px system-ui, -apple-system, sans-serif; color: #1c2418; }
+.leaflet-tooltip.maplabel.ex { color: #8a2f12; }
+.fplabel { width: max-content; translate: -50% -110%; padding: 1px 6px; border-radius: 5px; background: rgb(255 255 255 / .88); color: #1c4f8f; font: 600 11.5px system-ui, -apple-system, sans-serif; white-space: nowrap; }
+.fplabel.sat { color: #8a2f12; }
 
 /* --------------------------------------------------------------------- print */
 @media print {

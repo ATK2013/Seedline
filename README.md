@@ -35,6 +35,12 @@ npm test
   Fields can be renamed and removed. Guests' fields stay on the device;
   signed-in farmers' fields are in their account (a guest's fields move into
   the account on sign-in).
+- **Map settings** (a tab on the full-screen map, or the gear on the small
+  map): Map, Light or Satellite style, and switches for place names, your saved
+  fields (labelled with their names), the example fields, and what the data
+  covers (the ~50 km weather cell NASA POWER reads and the 500 m satellite
+  pixel around the pin). Kept on the device. Map styles (Map, Light,
+  Satellite) and their place names come from Esri's tile services.
 - **Field tabs**: Overview, Options, Risk, History, Satellite and How it works.
   The browser's back button moves between My fields and a field.
 - **Eleven crops**, including autumn-sown winter wheat and rice, in three
@@ -108,7 +114,9 @@ critical path:
 - green-up belongs to the pixel, so a field is fetched once and every crop and
   setting there reuses it; answers are also kept in the browser;
 - the example fields ship with a saved copy of their NASA data
-  (`data/greenups.json`), so a demo never waits on NASA;
+  (`data/greenups.json`), so a demo never waits on NASA. Each example pin sits
+  on a pixel that NASA's MCD12Q1 land-cover map labels cropland in every year
+  2019–2022 (several earlier pins sat on towns or a forest);
 - a request that fails quickly is retried once; one that fails after a long
   wait is not, and the farmer gets a "Try again" button instead.
 

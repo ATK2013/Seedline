@@ -9,7 +9,7 @@
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,650&display=swap">
   <link rel="stylesheet" href="vendor/leaflet/leaflet.css">
-  <link rel="stylesheet" href="css/style.css?v=10">
+  <link rel="stylesheet" href="css/style.css?v=12">
 </head>
 <body class="picking">
   <script>
@@ -67,6 +67,11 @@
         <svg viewBox="0 0 24 24" width="24" height="24" aria-hidden="true"><path d="M12 22V11" stroke="currentColor" stroke-width="2" stroke-linecap="round" fill="none"/><path d="M12 12C12 7 8.5 4.5 4 4.5c0 5 3 7.5 8 7.5ZM12 15c0-4 2.800-6 7-6 0 4-2.600 6-7 6Z" fill="currentColor"/></svg>
         <span>Seedline</span>
       </div>
+      <div class="picktabs" id="pickTabs" role="tablist">
+        <button type="button" role="tab" id="ptab-find" data-ptab="find" aria-controls="ppanel-find" aria-selected="true" data-i18n="ptab.find"></button>
+        <button type="button" role="tab" id="ptab-map" data-ptab="map" aria-controls="ppanel-map" aria-selected="false" tabindex="-1" data-i18n="ptab.map"></button>
+      </div>
+      <div id="ppanel-find" class="ppanel" role="tabpanel" aria-labelledby="ptab-find">
       <h2 data-i18n="pick.title"></h2>
       <p data-i18n="pick.body"></p>
       <form id="search" class="search" role="search">
@@ -83,12 +88,29 @@
       <div id="pickAcct" class="pickacct" hidden></div>
       <div class="pickex">
         <span data-i18n="pick.try"></span>
-        <button type="button" data-example="42.03,-93.63,maize">🌽 Iowa</button>
-        <button type="button" data-example="13.5,2.1,millet">🌿 Niger</button>
-        <button type="button" data-example="-15.4,28.3,maize">🌽 Zambia</button>
-        <button type="button" data-example="48.5,2.5,winterwheat">❄️ France</button>
+        <button type="button" data-example="42.08,-93.52,maize">🌽 Iowa</button>
+        <button type="button" data-example="13.2688,2.3353,millet">🌿 Niger</button>
+        <button type="button" data-example="-14.9854,28.3582,maize">🌽 Zambia</button>
+        <button type="button" data-example="48.25,1.65,winterwheat">❄️ France</button>
         <button type="button" data-example="14.5,100.5,rice">🍚 Thailand</button>
-        <button type="button" data-example="-33.9,-60.6,soybean">🫘 Argentina</button>
+        <button type="button" data-example="-33.98,-60.72,soybean">🫘 Argentina</button>
+      </div>
+      </div>
+      <div id="ppanel-map" class="ppanel" role="tabpanel" aria-labelledby="ptab-map" hidden>
+        <h2 data-i18n="ptab.map"></h2>
+        <fieldset class="msstyle">
+          <legend data-i18n="ms.style"></legend>
+          <label><input type="radio" name="mstyle" value="map"> <span data-i18n="ms.style.map"></span></label>
+          <label><input type="radio" name="mstyle" value="light"> <span data-i18n="ms.style.light"></span></label>
+          <label><input type="radio" name="mstyle" value="satellite"> <span data-i18n="ms.style.sat"></span></label>
+        </fieldset>
+        <div class="mstoggles">
+          <label class="mstoggle"><span><b data-i18n="ms.names"></b><span class="hint" data-i18n="ms.names.d"></span></span><input type="checkbox" role="switch" data-mpref="names"></label>
+          <label class="mstoggle"><span><b data-i18n="nav.home"></b><span class="hint" data-i18n="ms.fields.d"></span></span><input type="checkbox" role="switch" data-mpref="fields"></label>
+          <label class="mstoggle"><span><b data-i18n="ms.examples"></b><span class="hint" data-i18n="ms.examples.d"></span></span><input type="checkbox" role="switch" data-mpref="examples"></label>
+          <label class="mstoggle"><span><b data-i18n="ms.footprint"></b><span class="hint" data-i18n="ms.footprint.d"></span></span><input type="checkbox" role="switch" data-mpref="footprint"></label>
+        </div>
+        <p class="fine" data-i18n="ms.note"></p>
       </div>
     </div>
   </div>
@@ -237,6 +259,6 @@
   <div id="tip" class="tip" hidden></div>
 
   <script src="vendor/leaflet/leaflet.js"></script>
-  <script type="module" src="js/app.js?v=10"></script>
+  <script type="module" src="js/app.js?v=12"></script>
 </body>
 </html>
