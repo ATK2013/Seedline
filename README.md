@@ -62,6 +62,27 @@ npm test
 - **A validation page** (`validation.html`) that runs the model for 20
   crop-and-region pairs and scores it against published planting calendars.
 
+## On a phone
+
+Seedline installs as a phone app (a Progressive Web App): it gets its own
+home-screen icon, opens full screen without the browser's bars, and opens
+without signal, showing the fields whose weather it has kept.
+
+- **Android (Chrome):** an "Install Seedline" banner appears, or use the
+  browser menu's "Install app". Long-pressing the icon offers My fields and
+  New field shortcuts.
+- **iPhone and iPad (Safari):** tap Share, then "Add to Home Screen". The app
+  shows these steps itself.
+
+Installing needs the site to be served over **HTTPS**, for example GitHub
+Pages or Firebase Hosting. A phone opening `http://<your computer's IP>:8000`
+on the local network gets the website but cannot install it, and its
+service worker (offline use) and "Use my location" will not work there.
+
+The pieces: `manifest.webmanifest` (name, colours, icons, shortcuts),
+`icons/` (drawn from `icons/icon.svg`), and `sw.js`, which caches the app's
+files when it installs.
+
 ## How it works
 
 **Data.** One request to the [NASA POWER](https://power.larc.nasa.gov/) daily

@@ -1,15 +1,16 @@
 // Bump ?v= here and in index.html whenever these files change, so browsers
 // never pair a new page with stale cached scripts or styles.
-import { CROPS, MATURITY } from './crops.js?v=12';
-import { fetchDaily } from './power.js?v=12';
-import { ndviTargets, compareNdvi, assignGreenups, TOLERANCE } from './ndvi.js?v=12';
-import { fetchGreenups, pixelKey } from './modis.js?v=12';
-import { fetchForecast, outlook } from './forecast.js?v=12';
-import { parsePower, analyze, riskBand, looksLikeWater, SOILS, OUT, SEASON_DAYS } from './analysis.js?v=12';
-import { LANGS, t, setLang, getLang, locale, applyStatic } from './i18n.js?v=12';
+import { CROPS, MATURITY } from './crops.js?v=13';
+import { fetchDaily } from './power.js?v=13';
+import { ndviTargets, compareNdvi, assignGreenups, TOLERANCE } from './ndvi.js?v=13';
+import { fetchGreenups, pixelKey } from './modis.js?v=13';
+import { fetchForecast, outlook } from './forecast.js?v=13';
+import { parsePower, analyze, riskBand, looksLikeWater, SOILS, OUT, SEASON_DAYS } from './analysis.js?v=13';
+import { LANGS, t, setLang, getLang, locale, applyStatic } from './i18n.js?v=13';
 
 const $ = (id) => document.getElementById(id);
 const DAY = 86400000;
+let installPrompt = null;   // Chrome's install prompt, kept for our own Install button (see "install the app")
 const ls = {
   get(k) { try { return localStorage.getItem(k); } catch { return null; } },
   set(k, v) { try { localStorage.setItem(k, v); } catch { /* blocked or full */ } },
@@ -50,6 +51,7 @@ function refreshText() {
   buildAssume();
   renderAccount();
   renderEmailForm();
+  renderInstall();
   if (pin) drawFootprint(pin.getLatLng().lat, pin.getLatLng().lng);
   if (current) render();
 }
@@ -1174,7 +1176,7 @@ document.addEventListener('click', (e) => {
 const arrivedWithLink = /^#-?\d/.test(location.hash);
 if (!arrivedWithLink && !ls.get('seedline:guest') && !ls.get('seedline:signedin')) showSignin(true);
 
-import('./account.js?v=12').then((mod) => {
+import('./account.js?v=13').then((mod) => {
   account = mod;
   $('googleBtn').disabled = false;
   $('emailSubmit').disabled = false;
@@ -1240,6 +1242,7 @@ function goStart() {
 addEventListener('hashchange', () => {
   const h = location.hash;
   if (h === '#fields') { setPicking(false); showView('home'); return; }
+  if (h === '#new') { newField(); return; }
   if (current && h === current.hash) { setPicking(false); showView('field'); return; }
   if (h === expectedHash) return;
   if (!applyHash(h)) goStart();
@@ -1500,6 +1503,40 @@ refreshText();
 showTab('overview');
 const last = ls.get('seedline:last');
 if (last) { $('pickLast').hidden = false; $('pickLast').addEventListener('click', () => applyHash(last)); }
-if (location.hash === '#fields') { setPicking(false); showView('home'); } else if (!applyHash(location.hash)) goStart();
+if (location.hash === '#fields') { setPicking(false); showView('home'); }
+else if (location.hash === '#new') { goStart(); newField(); }   // the "New field" home-screen shortcut
+else if (!applyHash(location.hash)) goStart();
+// ------------------------------------------------------------ install the app
+// Seedline installs as a phone app (manifest.webmanifest + sw.js). Android and
+// desktop Chrome offer an install prompt, which is kept for our own button;
+// iPhones have no prompt, so they get the Add to Home Screen steps instead.
+function standalone() { return matchMedia('(display-mode: standalone)').matches || navigator.standalone === true; }
+function isIOS() { return /iPhone|iPad|iPod/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1); }
+function installDismissed() { return Date.now() - (+ls.get('seedline:install-later') || 0) < 30 * DAY; }
+
+function renderInstall() {
+  const ios = isIOS() && !installPrompt;
+  const offer = !standalone() && (installPrompt || ios);
+  $('installHeader').hidden = !installPrompt || standalone();
+  $('installBar').hidden = !offer || installDismissed();
+  document.body.classList.toggle('install-open', !$('installBar').hidden);
+  $('installBody').textContent = t(ios ? 'inst.ios' : 'inst.body');
+  $('installGo').hidden = ios;
+  $('installLater').textContent = t(ios ? 'inst.ok' : 'inst.later');
+}
+async function promptInstall() {
+  if (!installPrompt) return;
+  installPrompt.prompt();
+  try { await installPrompt.userChoice; } catch { /* the farmer closed it */ }
+  installPrompt = null;   // a prompt can only be used once
+  renderInstall();
+}
+addEventListener('beforeinstallprompt', (e) => { e.preventDefault(); installPrompt = e; renderInstall(); });
+addEventListener('appinstalled', () => { installPrompt = null; ls.set('seedline:install-later', String(Date.now())); renderInstall(); });
+$('installGo').addEventListener('click', promptInstall);
+$('installHeader').addEventListener('click', promptInstall);
+$('installLater').addEventListener('click', () => { ls.set('seedline:install-later', String(Date.now())); renderInstall(); });
+renderInstall();
+
 // Offline reuse: the service worker keeps the app and the last fields' weather.
 if ('serviceWorker' in navigator && location.protocol !== 'file:') navigator.serviceWorker.register('sw.js').catch(() => {});

@@ -1,0 +1,25 @@
+{
+  "id": "./",
+  "name": "Seedline — know when to plant",
+  "short_name": "Seedline",
+  "description": "Drop a pin on your field: Seedline replays 45 years of NASA daily weather to find your safest planting window, this season and next.",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "display_override": ["standalone", "minimal-ui"],
+  "orientation": "any",
+  "background_color": "#f3ecdd",
+  "theme_color": "#17402a",
+  "lang": "en",
+  "dir": "ltr",
+  "categories": ["weather", "utilities", "productivity"],
+  "icons": [
+    { "src": "icons/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "icons/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" },
+    { "src": "icons/icon-maskable-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ],
+  "shortcuts": [
+    { "name": "My fields", "short_name": "My fields", "url": "./#fields", "icons": [{ "src": "icons/icon-192.png", "sizes": "192x192", "type": "image/png" }] },
+    { "name": "New field", "short_name": "New field", "url": "./#new", "icons": [{ "src": "icons/icon-192.png", "sizes": "192x192", "type": "image/png" }] }
+  ]
+}
